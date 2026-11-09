@@ -1,0 +1,185 @@
+name: Build AX3000T Firmware
+
+# 原「Build ImmortalWrt Firmware」编译流，clone/feeds/download/compile/upload 保留。
+# 本轮改动：源码统一改用 wangwang623/immortalwrt-mt798x fork；
+#           .config 精简为「闭源驱动 + 唯一插件 zram-swap」；
+#           增加 scripts/check-packages.sh 编译前门禁。
+# 布局：112m 大分区专用（MT7531 / AN8855 两种交换芯片版本），
+#       本工程三机型都只用大分区（112m / 114m / 110m），不编 stock 原厂布局。
+# 原 4 处多流隔离改动：
+#   1. 文件名/name 明确机型
+#   2. release tag 加机型前缀（否则同一天三个流会撞 tag）
+#   3. cache key 加机型前缀（否则三个流互相覆盖缓存）
+#   4. 去掉 Delete workflow runs / Remove old Releases
+#      （这两个步骤作用于整个仓库，会删掉其它机型的运行记录与 Release）
+# clone / feeds / config / download / compile / upload 全部未改。
+
+on:
+  # schedule:
+  #   - cron: "0 0 20 * *"
+  workflow_dispatch:
+
+env:
+  REPO_URL: https://github.com/wangwang623/immortalwrt-mt798x.git
+  REPO_BRANCH: openwrt-21.02
+  CONFIG_FILE: .config
+  SELF_BEFORE_SH: before-update-custom.sh
+  SELF_AFTER_SH: after-update-custom.sh
+  TZ: Asia/Shanghai
+  FEEDS_CONF: feeds.conf.default
+
+jobs:
+  build:
+    name: build-ax3000t-firmware
+    runs-on: ubuntu-22.04
+
+    permissions:
+      contents: write
+      actions: write
+
+    steps:
+    - name: Free disk space (Ubuntu)
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: false
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        swap-storage: false
+
+    - name: Checkout
+      uses: actions/checkout@main
+
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.eu.org/init_build_environment.sh)'
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /srcdir
+        sudo chown $USER:$GROUPS /srcdir
+
+    - name: Clone source code
+      working-directory: /srcdir
+      run: |
+        echo "Free space:"
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /srcdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+    - name: Load custom feeds
+      run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $SELF_BEFORE_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$SELF_BEFORE_SH
+
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: Load custom config
+      run: |
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        chmod +x $GITHUB_WORKSPACE/scripts/check-packages.sh
+        (cd openwrt && $GITHUB_WORKSPACE/scripts/check-packages.sh)
+        chmod +x $SELF_AFTER_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$SELF_AFTER_SH
+
+    - name: Download package
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        echo "===== defconfig 后机型符号校验（112m 大分区）====="
+        grep -q '^CONFIG_TARGET_DEVICE_mediatek_mt7981_DEVICE_xiaomi_mi-router-ax3000t=y' .config || {
+          echo "[FAIL] AX3000T 机型符号被 defconfig 丢弃"; exit 1
+        }
+        if grep -qE '^CONFIG_TARGET_DEVICE_mediatek_mt7981_DEVICE_.*-stock=y' .config; then
+          echo "[FAIL] 出现 stock 布局机型，本工程不编原厂布局"; exit 1
+        fi
+        echo "[OK] 仅 112m 大分区机型有效"
+        make download -j8 V=11
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: Compile the firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "DEVICE_NAME=_xiaomi-ax3000t" >>$GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT
+
+    - name: Upload bin directory
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      with:
+        name: ImmortalWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: Organize files
+      id: organize
+      if: (!cancelled())
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: ImmortalWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
+    - name: Generate release tag
+      id: tag
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      run: |
+        echo "release_tag=AX3000T_$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        touch release.txt
+        echo "ImmortalWrt 5.4 | Xiaomi AX3000T" >> release.txt
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware to release
+      id: release
+      uses: softprops/action-gh-release@v3
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      with:
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        files: ${{ env.FIRMWARE }}/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Clean Compile
+      id: clean-compile
+      run: |
+        cd openwrt
+        make clean
+
+    - name: Cache Compile
+      id: cache-compile
+      uses: actions/cache/save@v6
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      with:
+        path: openwrt
+        key: ${{ runner.os }}-openwrt-ax3000t-${{ hashFiles('openwrt/feeds.conf.default') }}
+
+    # 以下两步已移除：它们作用于整个仓库，会误删 WF3000A / AX6000 的运行记录与 Release。
+    # 需要清理时请在 Actions / Releases 页面手动删除。

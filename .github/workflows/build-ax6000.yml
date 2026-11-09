@@ -1,0 +1,204 @@
+name: Build Redmi AX6000 Firmware
+
+# 源码：wangwang623/immortalwrt-mt798x（与 AX3000T / WF3000A 共用同一份 fork）
+# 5.4 源码原生支持 xiaomi_redmi-router-ax6000，无需板级移植。
+#
+# 布局：固定 hanwckf 多分区 U-Boot 的 110m 大分区（IMAGE_SIZE 112640k）。
+#       本工程三机型都只用大分区（AX3000T 112m / WF3000A 114m / AX6000 110m），
+#       不编小米原厂 stock 布局，也没有 layout 输入框。
+#
+# config/ax6000.config 派生自源码自带 defconfig/mt7986-ax6000.config，
+# 只保留 AX6000 一个大分区机型（避免 MULTI_PROFILE 顺带编 8 个无关机型）。
+# 注意：不要从 AX3000T 的 .config 派生 —— 那里面有大量 MT7981 专属符号
+# （MTK_CHIP_MT7981 / WARP_CHIPSET="mt7981" / first_card_name="MT7981"），
+# 会把闭源无线驱动指向错误的固件路径。
+
+on:
+  # schedule:
+  #   - cron: "0 0 20 * *"
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: "源码 fork 的分支名（默认 openwrt-21.02）"
+        required: false
+        default: "openwrt-21.02"
+      publish_release:
+        description: "是否发布 GitHub Release（false 只留 Artifacts）"
+        required: false
+        type: choice
+        options: ["true", "false"]
+        default: "true"
+
+env:
+  REPO_URL: https://github.com/wangwang623/immortalwrt-mt798x.git
+  REPO_BRANCH: ${{ github.event.inputs.source_branch || 'openwrt-21.02' }}
+  CONFIG_FILE: config/ax6000.config
+  SELF_BEFORE_SH: before-update-custom.sh
+  SELF_AFTER_SH: scripts/after-ax6000.sh
+  TZ: Asia/Shanghai
+  FEEDS_CONF: feeds.conf.default
+
+jobs:
+  build:
+    name: build-redmi-ax6000-firmware
+    runs-on: ubuntu-22.04
+
+    permissions:
+      contents: write
+      actions: write
+
+    steps:
+    - name: Free disk space (Ubuntu)
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: false
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        swap-storage: false
+
+    - name: Checkout
+      uses: actions/checkout@main
+
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.eu.org/init_build_environment.sh)'
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /srcdir
+        sudo chown $USER:$GROUPS /srcdir
+
+    - name: Clone source code
+      working-directory: /srcdir
+      run: |
+        echo "Free space:"
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /srcdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+    - name: Load custom feeds
+      run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $SELF_BEFORE_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$SELF_BEFORE_SH
+
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: Load custom config
+      run: |
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] || { echo "[FAIL] 缺少 $CONFIG_FILE"; exit 1; }
+        mv $CONFIG_FILE openwrt/.config
+        chmod +x $GITHUB_WORKSPACE/scripts/check-packages.sh
+        (cd openwrt && $GITHUB_WORKSPACE/scripts/check-packages.sh)
+        chmod +x $GITHUB_WORKSPACE/$SELF_AFTER_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$SELF_AFTER_SH
+
+    - name: Download package
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        echo "===== defconfig 后机型符号校验（110m 大分区）====="
+        grep -q '^CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_xiaomi_redmi-router-ax6000=y' .config || {
+          echo "[FAIL] AX6000 110m 机型符号被 defconfig 丢弃"
+          exit 1
+        }
+        if grep -qE '^CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_.*-stock=y' .config; then
+          echo "[FAIL] 出现 stock 布局机型，本工程不编原厂布局"; exit 1
+        fi
+        echo "[OK] 仅 110m 大分区机型有效"
+        make download -j8 V=11
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: Compile the firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "===== 产物校验 ====="
+        ls bin/targets/mediatek/mt7986/*redmi-router-ax6000* >/dev/null 2>&1 || {
+          echo "[FAIL] 未生成 redmi-router-ax6000 产物"; exit 1;
+        }
+        if ls bin/targets/mediatek/mt7986/*redmi-router-ax6000* | grep -q 'stock'; then
+          echo "[FAIL] 产物含 stock 布局固件"; exit 1
+        fi
+        echo "[OK] 产物为 110m 大分区固件"
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "DEVICE_NAME=_redmi-ax6000-110m" >>$GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT
+
+    - name: Upload bin directory
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      with:
+        name: ImmortalWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: Organize files
+      id: organize
+      if: (!cancelled())
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: ImmortalWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
+    - name: Generate release tag
+      id: tag
+      if: steps.compile.outputs.status == 'success' && !cancelled() && github.event.inputs.publish_release != 'false'
+      run: |
+        echo "release_tag=AX6000_110m_$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        touch release.txt
+        echo "ImmortalWrt 5.4 | Redmi Router AX6000 | 110m 大分区" >> release.txt
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware to release
+      id: release
+      uses: softprops/action-gh-release@v3
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      with:
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        files: ${{ env.FIRMWARE }}/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Clean Compile
+      id: clean-compile
+      run: |
+        cd openwrt
+        make clean
+
+    - name: Cache Compile
+      id: cache-compile
+      uses: actions/cache/save@v6
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      with:
+        path: openwrt
+        key: ${{ runner.os }}-openwrt-ax6000-${{ hashFiles('openwrt/feeds.conf.default') }}
+
+    # 不做全局清理：Delete workflow runs / Remove old Releases 会误删其它机型。

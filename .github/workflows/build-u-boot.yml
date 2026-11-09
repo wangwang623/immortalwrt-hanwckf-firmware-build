@@ -1,9 +1,14 @@
-name: Build U-Boot
+name: Build AX3000T U-Boot
+
+# 原 U-Boot 流程，保留 AX3000T / AX3000T-AN8855 两个板型。
+# 相对原文件只改 3 处：
+#   1. name 明确机型
+#   2. release tag 加 U-Boot_AX3000T_ 前缀（避免与固件 Release 撞 tag）
+#   3. 去掉 Delete workflow runs / Remove old Releases（会误删 3 个固件流的记录与 Release）
 
 on:
-  # schedule:  
+  # schedule:
   #   - cron: "0 2 15 * *"
-
   workflow_dispatch:
 
 env:
@@ -13,7 +18,7 @@ env:
 
 jobs:
   build:
-    name: Build U-Boot
+    name: Build AX3000T U-Boot
     runs-on: ubuntu-latest
 
     permissions:
@@ -22,25 +27,9 @@ jobs:
 
     strategy:
       matrix:
-        board: [ax3000t, ax3000t_an8855] 
+        board: [ax3000t, ax3000t_an8855]
 
     steps:
-
-      # - name: Free disk space (Ubuntu)
-      #   uses: jlumbroso/free-disk-space@main
-      #   with:
-      #     # this might remove tools that are actually needed,
-      #     # if set to "true" but frees about 6 GB
-      #     tool-cache: false
-          
-      #     # all of these default to true, but feel free to set to
-      #     # "false" if necessary for your workflow
-      #     android: true
-      #     dotnet: true
-      #     haskell: true
-      #     large-packages: true
-      #     swap-storage: false
-
       - name: Checkout
         uses: actions/checkout@main
 
@@ -50,29 +39,25 @@ jobs:
         run: |
           sudo apt-get update
           sudo -E apt-get -qq install gcc-aarch64-linux-gnu build-essential flex bison libssl-dev device-tree-compiler
-
           sudo -E apt-get -qq autoremove --purge
           sudo -E apt-get -qq clean
-
           sudo timedatectl set-timezone "$TZ"
-          
           sudo mkdir -p /srcdir
           sudo chown $USER:$GROUPS /srcdir
 
       - name: Clone Source Repository
         working-directory: /srcdir
         run: |
-           echo "Free space:"
-            df -hT $PWD
-            git clone $REPO_URL -b $REPO_BRANCH u-boot
-            ln -sf /srcdir/u-boot $GITHUB_WORKSPACE/u-boot      
+          echo "Free space:"
+          df -hT $PWD
+          git clone $REPO_URL -b $REPO_BRANCH u-boot
+          ln -sf /srcdir/u-boot $GITHUB_WORKSPACE/u-boot
 
       - name: Compile U-Boot
         id: compile
         run: |
           cd u-boot
           SOC=mt7981 BOARD=${{ matrix.board }} MULTI_LAYOUT=1 FIXED_MTDPARTS=1 ./build.sh
-          
           echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
 
@@ -87,9 +72,9 @@ jobs:
         id: tag
         if: steps.compile.outputs.status == 'success' && !cancelled()
         run: |
-          echo "release_tag=U-Boot_$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+          echo "release_tag=U-Boot_AX3000T_${{ matrix.board }}_$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
           touch release.txt
-          echo "U-Boot 🌝 xiaomi ax3000t" >> release.txt
+          echo "U-Boot 🌝 xiaomi ax3000t (${{ matrix.board }})" >> release.txt
           echo "status=success" >> $GITHUB_OUTPUT
 
       - name: Upload firmware to release
@@ -102,20 +87,5 @@ jobs:
           files: u-boot/output/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
-      - name: Delete workflow runs
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          retain_days: 7
-          keep_minimum_runs: 3
 
-      - name: Remove old Releases
-        uses: dev-drprasad/delete-older-releases@v0.3.4
-        if: steps.release.outputs.status == 'success' && !cancelled()
-        with:
-          keep_latest: 3
-          delete_tags: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 以下两步已移除：它们作用于整个仓库，会误删 3 个固件流的运行记录与 Release。

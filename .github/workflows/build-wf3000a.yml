@@ -1,0 +1,201 @@
+name: Build KST WF3000A Firmware
+
+# 源码：wangwang623/immortalwrt-mt798x（已覆盖 4 个 5.4 板级移植文件）
+#   - mt7981-kst-wf3000a.dts
+#   - mt7981.mk
+#   - 02_network
+#   - platform.sh
+# 布局：expand(114m) 大分区专用，U-Boot Web 里也必须选 114m。
+#       本工程三机型都只用大分区（112m / 114m / 110m），不编 stock 原厂布局。
+# 5.4 的 W25N01GV 定义为 OOB 64B，与 U-Boot NMBM 签名天然一致，
+# 不需要、也不要加 6.6 的 mediatek,bmt-mtd-overridden-oobsize。
+
+on:
+  # schedule:
+  #   - cron: "0 0 20 * *"
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: "源码 fork 的分支名（默认 openwrt-21.02）"
+        required: false
+        default: "openwrt-21.02"
+      publish_release:
+        description: "是否发布 GitHub Release（false 只留 Artifacts）"
+        required: false
+        type: choice
+        options: ["true", "false"]
+        default: "true"
+
+env:
+  REPO_URL: https://github.com/wangwang623/immortalwrt-mt798x.git
+  REPO_BRANCH: ${{ github.event.inputs.source_branch || 'openwrt-21.02' }}
+  CONFIG_FILE: config/wf3000a.config
+  SELF_BEFORE_SH: before-update-custom.sh
+  SELF_AFTER_SH: scripts/after-wf3000a.sh
+  TZ: Asia/Shanghai
+  FEEDS_CONF: feeds.conf.default
+
+jobs:
+  build:
+    name: build-kst-wf3000a-firmware
+    runs-on: ubuntu-22.04
+
+    permissions:
+      contents: write
+      actions: write
+
+    steps:
+    - name: Free disk space (Ubuntu)
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: false
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        swap-storage: false
+
+    - name: Checkout
+      uses: actions/checkout@main
+
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.eu.org/init_build_environment.sh)'
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /srcdir
+        sudo chown $USER:$GROUPS /srcdir
+
+    - name: Clone source code
+      working-directory: /srcdir
+      run: |
+        echo "Free space:"
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /srcdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+    - name: Load custom feeds
+      run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $SELF_BEFORE_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$SELF_BEFORE_SH
+
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: Load custom config and verify board port
+      run: |
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] || { echo "[FAIL] 缺少 $CONFIG_FILE"; exit 1; }
+        mv $CONFIG_FILE openwrt/.config
+        chmod +x $GITHUB_WORKSPACE/scripts/check-packages.sh
+        (cd openwrt && $GITHUB_WORKSPACE/scripts/check-packages.sh)
+        chmod +x $SELF_AFTER_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$SELF_AFTER_SH
+
+    - name: Download package
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        echo "===== defconfig 后机型符号校验 ====="
+        grep -q '^CONFIG_TARGET_DEVICE_mediatek_mt7981_DEVICE_kst_wf3000a=y' .config || {
+          echo "[FAIL] 机型符号被 defconfig 丢弃，检查源码 fork 的 mt7981.mk 是否覆盖成功"
+          exit 1
+        }
+        if grep -q '^CONFIG_TARGET_ROOTFS_INITRAMFS=y' .config; then
+          echo "[OK] initramfs 已启用"
+        fi
+        if grep -qE '^CONFIG_TARGET_DEVICE_mediatek_mt7981_DEVICE_.*-stock=y' .config; then
+          echo "[FAIL] 出现 stock 布局机型，本工程不编原厂布局"; exit 1
+        fi
+        echo "[OK] CONFIG_TARGET_DEVICE_mediatek_mt7981_DEVICE_kst_wf3000a=y"
+        make download -j8 V=11
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: Compile the firmware
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "===== 产物校验 ====="
+        ls bin/targets/mediatek/mt7981/*kst_wf3000a* >/dev/null 2>&1 || {
+          echo "[FAIL] 未生成 kst_wf3000a 产物"; exit 1;
+        }
+        echo "[OK] 产物文件名含 kst_wf3000a"
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "DEVICE_NAME=_kst-wf3000a" >>$GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT
+
+    - name: Upload bin directory
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      with:
+        name: ImmortalWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: Organize files
+      id: organize
+      if: (!cancelled())
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware directory
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: ImmortalWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
+    - name: Generate release tag
+      id: tag
+      if: steps.compile.outputs.status == 'success' && !cancelled() && github.event.inputs.publish_release != 'false'
+      run: |
+        echo "release_tag=WF3000A_$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        touch release.txt
+        echo "ImmortalWrt 5.4 | KST WF3000A | expand(114m)" >> release.txt
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware to release
+      id: release
+      uses: softprops/action-gh-release@v3
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      with:
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        files: ${{ env.FIRMWARE }}/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Clean Compile
+      id: clean-compile
+      run: |
+        cd openwrt
+        make clean
+
+    - name: Cache Compile
+      id: cache-compile
+      uses: actions/cache/save@v6
+      if: steps.compile.outputs.status == 'success' && !cancelled()
+      with:
+        path: openwrt
+        key: ${{ runner.os }}-openwrt-wf3000a-${{ hashFiles('openwrt/feeds.conf.default') }}
+
+    # 不做全局清理：Delete workflow runs / Remove old Releases 会误删其它机型。
