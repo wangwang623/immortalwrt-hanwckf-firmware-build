@@ -95,8 +95,16 @@ jobs:
 
     - name: Load custom config
       run: |
+        MISS=0
+        for f in "$CONFIG_FILE" "$GITHUB_WORKSPACE/scripts/check-packages.sh" \
+                 "$GITHUB_WORKSPACE/$SELF_AFTER_SH"; do
+          [ -e "$f" ] || { echo "[FAIL] 缺少 $f"; MISS=1; }
+        done
+        [ "$MISS" = 0 ] || {
+          echo "[FAIL] CI 仓库缺文件：请确认 config/ 与 scripts/ 已提交到当前分支"
+          exit 1
+        }
         [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] || { echo "[FAIL] 缺少 $CONFIG_FILE"; exit 1; }
         mv $CONFIG_FILE openwrt/.config
         chmod +x $GITHUB_WORKSPACE/scripts/check-packages.sh
         (cd openwrt && $GITHUB_WORKSPACE/scripts/check-packages.sh)
@@ -153,7 +161,7 @@ jobs:
 
     - name: Organize files
       id: organize
-      if: (!cancelled())
+      if: success()
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
