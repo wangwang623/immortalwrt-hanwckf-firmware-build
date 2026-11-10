@@ -1,5 +1,10 @@
 name: Build KST WF3000A Firmware
 
+# 项目 2 / 3 —— KST WF3000A（expand 114m 大分区）
+# 配置集中：config/wf3000a.config + scripts/wf3000a.sh（板级移植 4 文件自检）。
+# 共用门禁：内联在 scripts/wf3000a.sh 头部（三份逐字一致）。
+# 源码统一：wangwang623/immortalwrt-mt798x（已覆盖 4 个 5.4 板级移植文件）。
+
 # 源码：wangwang623/immortalwrt-mt798x（已覆盖 4 个 5.4 板级移植文件）
 #   - mt7981-kst-wf3000a.dts
 #   - mt7981.mk
@@ -31,10 +36,9 @@ env:
   REPO_BRANCH: ${{ github.event.inputs.source_branch || 'openwrt-21.02' }}
   CONFIG_FILE: config/wf3000a.config
   SELF_BEFORE_SH: before-update-custom.sh
-  SELF_AFTER_SH: scripts/after-wf3000a.sh
+  SELF_SCRIPT: scripts/wf3000a.sh
   TZ: Asia/Shanghai
   FEEDS_CONF: feeds.conf.default
-
 jobs:
   build:
     name: build-kst-wf3000a-firmware
@@ -92,14 +96,13 @@ jobs:
 
     - name: Load custom config and verify board port
       run: |
-        [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] || { echo "[FAIL] 缺少 $CONFIG_FILE"; exit 1; }
-        mv $CONFIG_FILE openwrt/.config
-        chmod +x $GITHUB_WORKSPACE/scripts/check-packages.sh
-        (cd openwrt && $GITHUB_WORKSPACE/scripts/check-packages.sh)
-        chmod +x $SELF_AFTER_SH
+        if [ -e files ]; then mv files openwrt/files; fi
+        [ -e "$CONFIG_FILE" ] || { echo "[FAIL] 缺少 $CONFIG_FILE"; exit 1; }
+        [ -e "$SELF_SCRIPT" ] || { echo "[FAIL] 缺少 $SELF_SCRIPT"; exit 1; }
+        cp "$CONFIG_FILE" openwrt/.config
+        chmod +x "$GITHUB_WORKSPACE/$SELF_SCRIPT"
         cd openwrt
-        $GITHUB_WORKSPACE/$SELF_AFTER_SH
+        "$GITHUB_WORKSPACE/$SELF_SCRIPT"
 
     - name: Download package
       id: package
