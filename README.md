@@ -1,100 +1,148 @@
-# immortalwrt-hanwckf-firmware-build
+# ImmortalWrt 5.4 云编译（三机型并行）
 
-GitHub Actions 云编译 **ImmortalWrt 21.02 / Linux 5.4** 固件，一个仓库三条独立编译流：
+GitHub Actions 云编译 ImmortalWrt 21.02 / Linux 5.4 固件，适配三台 MTK Filogic 路由器。
+源码统一使用 fork：[wangwang623/immortalwrt-mt798x](https://github.com/wangwang623/immortalwrt-mt798x)（`openwrt-21.02`，**MTK 闭源无线驱动**）。
 
-| Workflow | 机型 | 源码 | 分区布局 | 产物 |
-|---|---|---|---|---|
-| `build-ax3000t.yml` | Xiaomi AX3000T（MT7981） | 同一个 fork | **112m 大分区** | `xiaomi_mi-router-ax3000t*` |
-| `build-wf3000a.yml` | KST WF3000A（MT7981） | 同一个 fork | **114m（expand）** | `kst_wf3000a*` |
-| `build-ax6000.yml` | Redmi AX6000（MT7986） | 同一个 fork | **110m 大分区** | `xiaomi_redmi-router-ax6000*` |
+> 仓库由 `xiaomi-ax3000t-immortalwrt-hanwckf-firmware-build` 改名而来。
+> 原来的 AX3000T 编译流完整保留，另外增加 KST WF3000A 与 Redmi AX6000 两条流。
 
-另有 `build-u-boot.yml`：AX3000T 的 U-Boot 编译流，保持原样。
+---
 
-> **三个机型都只用大分区，不编小米原厂 stock 布局。** 三条流各写死自己的布局，没有 `layout` 输入框，也不会产出 `*-stock-*` 固件；`make defconfig` 前后都有门禁拦截 stock 机型符号。
+## 三个并行项目：按配置项类别分目录，每个目录对应三机型
 
-## 分区布局对照（刷机时必须对应）
+**相同/相似的配置项放在同一个文件夹，每个文件夹下都是 `ax3000t` / `wf3000a` / `ax6000` 三份文件，一一对应。**
+workflow 不持有配置内容，只用两个 env 变量选自己那一套。
 
-| 机型 | 布局名 | 分区大小依据 | U-Boot Web 里选 | 源码依据 |
-|---|---|---|---|---|
-| AX3000T | 112m | 112 MiB 大分区（`mt7981.mk` 机型定义） | 112m | 5.4 源码的大分区机型 |
-| KST WF3000A | expand(114m) | `ubi` 起始 `0x580000`、大小 `0x7200000`（116736k） | **expand(114m)** | 你已覆盖的 `mt7981-kst-wf3000a.dts` |
-| Redmi AX6000 | 110m | `IMAGE_SIZE := 112640k` | 110m | 5.4 源码 `mt7986.mk` 的 `xiaomi_redmi-router-ax6000` |
+| 类别 | 目录 | 三份文件 |
+|---|---|---|
+| 编译配置（意图清单） | `config/` | `ax3000t.config`、`wf3000a.config`、`ax6000.config` |
+| 编译前自检 / 后置脚本 | `scripts/` | `ax3000t.sh`、`wf3000a.sh`、`ax6000.sh` |
+| 编译流 | `.github/workflows/` | `build-ax3000t.yml`、`build-wf3000a.yml`、`build-ax6000.yml` |
 
-⚠️ 112m / 114m / 110m **不是同一套 mtdparts**，DTS 与 U-Boot 布局必须一一对应，刷错布局照样起不来。
+```yaml
+# 每个 workflow 只声明这两个变量
+env:
+  CONFIG_FILE:  config/<机型>.config
+  SELF_SCRIPT:  scripts/<机型>.sh
+```
 
-## 这一版的三个统一
+`Load custom config` 步骤用 `cp "$CONFIG_FILE" openwrt/.config`（**不是 `mv`**，配置不会被消耗），然后执行 `"$GITHUB_WORKSPACE/$SELF_SCRIPT"`。
 
-1. **源码统一**：三条固件流都 clone `wangwang623/immortalwrt-mt798x` 的 `openwrt-21.02` 分支。
-   AX3000T 不再用上游 `hanwckf/immortalwrt-mt798x`——因为你已把 WF3000A 的 4 个板级移植文件覆盖进这个 fork，三条流共用同一份源码才能保证行为一致。
-2. **无线统一**：全部使用 **MTK 闭源驱动**（`kmod-mt_wifi` / `kmod-warp` / `kmod-conninfra` / `wifi-dats` / `mtwifi-cfg` / `luci-app-mtwifi-cfg`）+ `kmod-mediatek_hnat`。这份 5.4 源码没有开源 mt76，缺这组包就没有 WiFi。
-3. **插件统一**：**第三方插件只有 `zram-swap`**（含必须同编的 `kmod-zram`、`kmod-lib-lzo`）。PassWall / SSR-Plus / OpenClash / TurboACC / UPnP / Argon / eqos / htop / tcpdump / nano / iptables 扩展全家桶全部不编。
-
-`luci-app-mtwifi-cfg` 是闭源驱动配套的无线配置界面，不是第三方插件，必须保留。
-
-## 包集合怎么来的
-
-三份 config 都是「意图清单」，不是全量快照：
-
-- **非包符号块**：逐行取自源码自带 `defconfig/mt7981-ax3000.config`（MT7981）或 `defconfig/mt7986-ax6000.config`（MT7986），**包括全部 `CONFIG_MTK_*` 和 `# CONFIG_X is not set`**。这批驱动符号很多是 `default y`，漏抄会触发 `eeprom.c` 等编译错误。
-- **包清单**：参考 `wangwang623/immortalwrt-mt798x-6.6` 的 `defconfig/wf3000a.config`（纯净固件），并去掉 5.4 不存在的包：`kmod-nft-offload`、`wifi-scripts`、`mtk-smp`、`luci-app-package-manager`、`CONFIG_ZRAM_DEF_COMP_LZ4` 等。
-- 依赖不手写，`make defconfig` 会沿依赖树自动展开。
-- 三份 config 头部统一标注「大分区专用，无 stock 变体」。
-
-`scripts/check-packages.sh` 在每条流 `make defconfig` **之前**执行，强制校验「闭源驱动齐全 + 只有 zram-swap 一个插件」。混入任何被禁包会在几分钟内 fail，不会等两小时编译完才发现固件不对。
-
-## 三条流的差异（只在这些地方）
-
-| | AX3000T | WF3000A | AX6000 |
+| 项目 | 分区布局 | U-Boot Web 选 | 管理地址 |
 |---|---|---|---|
-| 平台 | mediatek/mt7981 | mediatek/mt7981 | mediatek/mt7986 |
-| 机型数 | 2（MT7531 / AN8855，均 112m 大分区） | 1 | 1（110m 大分区） |
-| 布局 | 112m | **expand(114m)** | 110m |
-| initramfs | 不生成 | **生成**（先内存启动验证） | 不生成 |
-| 管理地址 | 192.168.31.1（沿用原编译流） | 192.168.1.1 | 192.168.1.1 |
-| Release tag | `AX3000T_*` | `WF3000A_*` | `AX6000_110m_*` |
+| Xiaomi AX3000T（MT7981） | **112m** | 112m | 192.168.31.1（原设定） |
+| KST WF3000A（MT7981） | **expand(114m)** | 114m | 192.168.1.1 |
+| Redmi AX6000（MT7986） | **110m** | 110m | 192.168.1.1 |
 
-三条流的 tag、cache key、artifact 名都带机型前缀，互不覆盖；且都不再执行「清理全仓库运行记录 / 旧 Release」的步骤。
+三机型都只用大分区，**不编小米原厂 stock 布局**。三条流各有独立的 Release tag（`AX3000T_` / `WF3000A_` / `AX6000_110m_`）、cache key 与 artifact 前缀，不会互相覆盖。
+
+### 共用逻辑怎么放
+
+包集合门禁**不再单独占一个文件**，而是内联在三个 `scripts/*.sh` 的头部（`# ===== 包集合门禁段 BEGIN/END =====`）。三份逐字一致，改一处要同步三处——这是「每个目录恰好 3 个机型文件」的代价，换来的是目录干净、项目对称。
+
+`before-update-custom.sh`、`feeds.conf.default`、`LICENSE`、`build-u-boot.yml` 留在仓库根目录：它们是三条流**共用**的基础设施，不是某个机型的配置项，因此不参与按机型分目录。
+
+---
+
+## 固件定位：系统完整功能 + 唯一插件 zram-swap
+
+三份 config 是同一套要求的三个实例：
+
+- **保留原工程的系统本身完整功能**：全部系统库、`kmod-*` 内核模块、netfilter / iptables / ip6tables / ebtables 扩展、
+  `ethtool` / `swconfig` / `wireless-tools` / `htop` / `tcpdump` / `nano` / `ipset` /
+  openssh / 系统默认主题 `luci-theme-bootstrap-mod` 等，逐项从原工程 617 行 `.config` 恢复。
+- **闭源无线驱动齐全**：`kmod-mt_wifi` / `kmod-warp` / `kmod-conninfra` / `wifi-dats` / `mtwifi-cfg` /
+  `luci-app-mtwifi-cfg` / `kmod-mediatek_hnat`。这份源码没有开源 mt76，缺一即无 WiFi。
+- **第三方插件只有 `zram-swap`**（含必须同编的 `kmod-zram` / `kmod-lib-lzo`）。
+  `kmod-zram` 与内核 vermagic 强绑定，事后 `opkg install` 装不上，所以必须编进固件。
+- **已删除的插件**：PassWall、SSR-Plus、vssr、rclone、TurboACC、UPnP（含 miniupnpd）、
+  eqos（含 mtkhqos_util）、Argon 主题，以及它们的汉化包与全部 `INCLUDE_*` 子选项。
+- 依赖不手写，`make defconfig` 会沿依赖树自动展开；门禁在编译前拦截白名单外的插件。
+
+> 「非包符号块」（机型 / 平台 / MTK 驱动符号）沿用**已编译成功**的版本，含与 fork 源码匹配的
+> `7673 + DEFAULT_FIRMWARE`。不要回退到原工程的 `7672 / mt7981-fw-20240823`，
+> 否则会找不到闭源无线固件路径。
+>
+> AX6000 的非包符号取自源码 `defconfig/mt7986-ax6000.config`（MT7986 专属），
+> 不能从 AX3000T 派生 —— 混进 `WARP_CHIPSET="mt7981"` 等符号会把驱动指向错误固件，
+> `scripts/ax6000.sh` 会直接拦下。
+
+`scripts/ax3000t.sh` 内含原工程 `after-update-custom.sh` 的 3 行 sed：管理地址 **192.168.31.1**、DHCP `2~55` 保持不变。
+
+---
+
+## 目录结构
+
+```
+.github/workflows/
+  build-ax3000t.yml      build-wf3000a.yml      build-ax6000.yml
+  build-u-boot.yml       原有 U-Boot 流（未改动，不属于三个固件项目）
+config/
+  ax3000t.config         wf3000a.config         ax6000.config
+scripts/
+  ax3000t.sh             wf3000a.sh             ax6000.sh
+before-update-custom.sh  原工程共用资产，保留在根目录
+feeds.conf.default       原工程共用资产，保留在根目录
+LICENSE
+README.md
+```
+
+> 根目录**不再有** `.config`、旧 `scripts/` 的散落副本、`config/*.sh` 或 `check-packages.sh`；
+> 旧的 `build-immortalwrt.yml` 应删除。仓库里不应再有 `_unchanged/` 之类存放旧文件的目录。
+
+---
 
 ## 使用
 
-1. 仓库名改为 `immortalwrt-hanwckf-firmware-build`；Settings → Actions → Workflow permissions 勾 **Read and write**。
-2. 按 `操作说明.md` 覆盖文件（**连根目录 `.config` 也要覆盖**）；若旧的 `.github/workflows/build-immortalwrt.yml` 还在，删掉。
-3. Actions → 建议顺序：**Build KST WF3000A Firmware**（自检最直接，会检查 fork 的 4 个板级文件）→ **Build Redmi AX6000 Firmware** → **Build AX3000T Firmware**。不要三条同时跑。
-4. 产物在 Artifacts / Releases；文件名带机型名即选对机型。
+1. Settings → Actions → General → Workflow permissions 勾 **Read and write**。
+2. Actions 里选择对应 workflow → **Run workflow**：
+   - `build-ax3000t.yml`：无输入项，直接跑。
+   - `build-wf3000a.yml` / `build-ax6000.yml`：`source_branch` 默认 `openwrt-21.02`；`publish_release=false` 只留 Artifacts。
+3. 产物在 Artifacts / Release，文件名含机型：
+   ```
+   ...-mediatek-mt7981-xiaomi_mi-router-ax3000t-...
+   ...-mediatek-mt7981-kst_wf3000a-...
+   ...-mediatek-mt7986-xiaomi_redmi-router-ax6000-...
+   ```
+   WF3000A 还会多产出一个 `initramfs-kernel.bin`。
 
-WF3000A / AX6000 的 `source_branch` 输入框用于 fork 分支名不是 `openwrt-21.02` 时填写实际值。AX6000 流**没有 layout 选项**，固定 110m。
+三条流各设三道编译期门禁（配置存在性与包集合 → `make defconfig` 后机型符号 → 产物文件名），
+配置错误会在几分钟内 fail，不会等两小时编译完才发现。
 
-## 刷完后设置 zram（可选）
+本地目录与内容校验、模拟运行（含 7 个负例）的结果见本仓库 `验证报告.md`。
 
-5.4 内核没有 6.6 的 `CONFIG_ZRAM_DEF_COMP_LZ4` choice，`zram-swap` 的容量与算法由 UCI 决定（默认按 `MemTotal/2048`，算法 lzo）。要与 6.6 版 WF3000A 一致的 **64M + LZ4**：
+---
 
-```sh
-uci set system.@system[0].zram_size_mb='64'
-uci set system.@system[0].zram_comp_algo='lz4'
-uci commit system
-/etc/init.d/zram-swap restart
-zram status        # 或 cat /sys/block/zram0/comp_algorithm
-```
+## 源码 fork 的依赖
 
-> 若内核未带 LZ4 压缩，`comp_algorithm` 里没有 `lz4`，保持默认 lzo 即可，不影响使用。
-> `kmod-zram` 与内核 vermagic 强绑定，**已编进固件，不要再 `opkg install zram-swap`**。
+- **AX3000T / AX6000**：5.4 源码原生支持，clone fork 即可。
+- **WF3000A**：需要 fork 里已覆盖 4 个板级移植文件（已上传）：
+  `mt7981-kst-wf3000a.dts`、`mt7981.mk`、`02_network`、`platform.sh`。
+  `scripts/wf3000a.sh` 会在编译前逐个校验，缺文件立即 fail。
 
-## 源码 fork 的前提
+**5.4 不需要 oobsize 修复。** 该内核的 W25N01GV 定义为 OOB 64B，与 U-Boot 写进 NMBM 签名的
+`spare_size=64` 天然一致；不要加 6.6 的 `mediatek,bmt-mtd-overridden-oobsize`，自检脚本会拦。
 
-WF3000A 需要 `wangwang623/immortalwrt-mt798x` 里已经覆盖这 4 个文件（本仓库不含它们）：
+---
 
-```
-target/linux/mediatek/files-5.4/arch/arm64/boot/dts/mediatek/mt7981-kst-wf3000a.dts
-target/linux/mediatek/image/mt7981.mk
-target/linux/mediatek/mt7981/base-files/etc/board.d/02_network
-target/linux/mediatek/mt7981/base-files/lib/upgrade/platform.sh
-```
+## ⚠️ 编译成功 ≠ 能正常用
 
-5.4 的 W25N01GV 定义为 OOB 64B，与 U-Boot 的 NMBM 签名天然相等，**不要加 6.6 那行 `mediatek,bmt-mtd-overridden-oobsize`**；`after-wf3000a.sh` 会把误加判为失败。
+之前三个固件都编译成功，但「能用」还没验证。刷机前请按这个顺序确认：
 
-## 边界
+1. **先 initramfs 内存启动**（WF3000A 有该产物，不写 flash、零风险）：
+   确认能进系统、`dmesg | grep -i nmbm` 出现 `NMBM has been successfully attached` 且无 `mismatch`。
+2. **确认布局对应**：U-Boot Web 里 112m / expand(114m) / 110m 必须与所刷固件一致，刷错布局起不来。
+3. **确认有线与无线**：WF3000A 的 5.4 DTS 是按 6.6 已验证硬件定义重写的，
+   静态自检通过但**尚未实机验证有线/无线**；重点看 `ip link`、各 LAN/WAN 口能否拿到 IP、
+   `iwpriv ra0` 与校准数据。刷 8103 固件有线不通就是拓扑不同，这一版已改为 3LAN+1WAN。
+4. **确认 MAC**：WF3000A 从 `Factory 0x4` 推导 LAN−1 / WAN−2，应与机身标签一致，不要出现随机 MAC。
+5. **zram**：5.4 没有 `CONFIG_ZRAM_DEF_COMP_LZ4`，容量/算法由 UCI 决定。
+   如需 64M，刷完后设：
+   ```sh
+   uci set system.@system[0].zram_size_mb='64'
+   uci commit system
+   ```
+6. 有条件接 TTL（115200 8N1），开机日志里 `ubi0 error` / `VFS: Unable to mount root fs` 能一句确诊。
 
-- 本仓库只做云编译编排，**不含源码**；源码是上面那个 fork。
-- 本地 `python3 simulate.py` 可验证 config / 包门禁 / 板级自检 / 大分区与无 stock 残留 / workflow 隔离，但沙盒没有交叉工具链，**没有实际跑 `make`**，最终以在线编译为准。
-- WF3000A 的 5.4 DTS 按你确认可用的 6.6 `mt7981b-kst-wf3000a.dts` 硬件定义重写，静态检查通过，有线/无线尚未实机验证。
-- 闭源驱动固有行为：LuCI 里 `iwinfo` 不可用，无线状态看 `luci-app-mtwifi-cfg`；无线配置在 `/etc/wireless/mt7981/` 的 `.dat` profile，不是 `/etc/config/wireless`。
+> 边界：沙盒没有交叉工具链与 `dtc`，未实际执行 `make defconfig` / `make` / 编译 DTS，
+> 最终以在线编译与实机验证为准。
