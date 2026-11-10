@@ -4,28 +4,24 @@
 # 在 openwrt 源码根目录执行；配套 config/ax3000t.config。
 #
 # 本脚本 = 三段共用逻辑（三份逐字一致）+ 机型专属自检：
-#           · 包集合门禁  · 统一 LAN 地址  · zram 默认 64M/lzo
+#           · 必要包正向校验  · 统一 LAN 地址  · zram 默认 64M/lzo
 # 目录约定：config/ 放 .config，scripts/ 放 .sh，workflows/ 放 .yml，
 #           三个目录都按 ax3000t / wf3000a / ax6000 一一对应。
 
-# ===== 包集合门禁段 BEGIN（三份 scripts/*.sh 逐字相同，改一处需同步三处）=====
+# ===== 必要包正向校验段 BEGIN（三份 scripts/*.sh 逐字相同，改一处需同步三处）=====
 # 执行位置：openwrt 源码根目录、make defconfig【之前】。
-# 内联在 scripts/<机型>.sh 头部，不再单独占用一个共用文件。
-#
-# 校验目标：
-#   · 系统本身的完整功能全部保留（系统工具 / 库 / kmod / netfilter 扩展等）
-#   · MTK 闭源无线驱动齐全（缺一即无 WiFi）
-#   · 第三方插件【只有 zram-swap】，其余一律拒绝
-#
-# 注意：htop / tcpdump / nano / ipset / iptables 扩展 / ebtables / tc /
-#       ethtool / swconfig / wireless-tools 等属于「系统功能」，不在禁用词里。
-#       所有 grep 都用 if / || true 包裹，避免 bash -e 下「没匹配到」误退。
+# 只校验「必要包在不在」，不校验「哪些包不该在」：
+#   · 以后改 config/*.config 增删任何非必要包，本段都不会拦
+#   · 只有缺了闭源驱动 / zram / 中文环境 / 基础系统包才 fail
+# config 末尾的 is not set 行是当前的「不编声明」，不是门禁；
+#   想加某个包，把对应行改成 =y 即可，无需改脚本。
+# 所有 grep 都用 if 包裹，避免 bash -e 下「没匹配到」误退。
 
 fail() { echo "[FAIL] $*"; exit 1; }
 ok()   { echo "[OK]   $*"; }
 
 [ -f .config ] || fail "openwrt/.config 不存在（workflow 没有把 config/*.config 拷进来）"
-echo "===== 包集合门禁：系统完整功能 + 闭源驱动 + 唯一插件 zram-swap ====="
+echo "===== 必要包正向校验（不限制新增包）====="
 
 # ① 闭源无线驱动与 HNAT（硬依赖，缺一即无 WiFi / 无硬件加速）
 for p in kmod-mt_wifi kmod-warp kmod-conninfra wifi-dats mtwifi-cfg \
@@ -36,7 +32,7 @@ for p in kmod-mt_wifi kmod-warp kmod-conninfra wifi-dats mtwifi-cfg \
 done
 ok "闭源无线驱动 + HNAT 齐全"
 
-# ② 唯一允许的第三方插件：zram-swap（kmod-zram 与内核绑定，必须同编）
+# ② zram-swap 三件套（与内核绑定，事后 opkg install 装不上）
 for p in kmod-zram kmod-lib-lzo zram-swap; do
   if ! grep -q "^CONFIG_PACKAGE_${p}=y" .config; then
     fail "缺少 $p（zram-swap 三件套必须编进固件）"
@@ -44,45 +40,16 @@ for p in kmod-zram kmod-lib-lzo zram-swap; do
 done
 ok "zram-swap + kmod-zram + kmod-lib-lzo 已内置"
 
-# ③ 白名单外的 luci-app 一律拒绝（只放行闭源驱动配套的无线配置界面）
-BAD=""
-for line in $(grep '^CONFIG_PACKAGE_luci-app-' .config | grep '=y' || true); do
-  p=${line%%=*}; p=${p#CONFIG_PACKAGE_}
-  [ "$p" = "luci-app-mtwifi-cfg" ] || BAD="$BAD $p"
-done
-[ -z "$BAD" ] || fail "白名单外的 luci-app 插件：$BAD"
-ok "无第三方 LuCI 应用（仅保留 luci-app-mtwifi-cfg）"
-
-# ④ 第三方主题（放行系统自带 luci-theme-bootstrap-mod）
-THEME=$(grep -E '^CONFIG_PACKAGE_luci-theme-.*=y' .config \
-        | grep -v 'luci-theme-bootstrap-mod' || true)
-[ -z "$THEME" ] || fail "出现第三方主题：$THEME"
-ok "无第三方主题（系统默认 bootstrap-mod 保留）"
-
-# ⑤ 已知第三方插件 / 代理核心 / 后端关键词
-KEY='passwall|ssr-plus|vssr|openclash|homeproxy|adguardhome|tailscale'\
-'|turboacc|eqos|upnp|miniupnpd|mtkhqos_util|argon|ddns|wol|nikki|daed'\
-'|bypass|mosdns|smartdns|rclone|zerotier|frp|alist|openvpn|v2ray|xray'\
-'|sing-box|hysteria|naiveproxy|haproxy|clash|tuic|shadowtls|chinadns'\
-'|TURBOACC_INCLUDE_'
-HIT=$(grep -E "^CONFIG_PACKAGE_.*(${KEY})" .config | grep '=y' || true)
-[ -z "$HIT" ] || fail "出现被禁止的第三方插件：$HIT"
-ok "无 PassWall / SSR-Plus / TurboACC / UPnP / eqos / Argon / 代理核心等插件"
-
-# ⑥ 系统完整功能软提示（不阻断，仅提醒排查「功能被误删」）
-for p in htop tcpdump ipset iptables-mod-tproxy ethtool swconfig \
-         wireless-tools openssh-sftp-server luci-theme-bootstrap-mod \
-         kmod-tun kmod-tcp-bbr ca-certificates; do
+# ③ 基础系统包
+for p in luci opkg ppp ca-bundle; do
   if ! grep -q "^CONFIG_PACKAGE_${p}=y" .config; then
-    echo "[WARN] 系统功能包 $p 未启用（如需完整功能请检查对应 config/*.config）"
+    fail "缺少基础系统包：$p"
   fi
 done
+ok "luci / opkg / ppp / ca-bundle 齐全"
 
-# ⑦ 基本中文环境（硬校验：LuCI 简体中文 + 基础汉化 + 闭源无线配置汉化）
-#    中文界面实际由 luci-i18n-* 提供；CONFIG_LUCI_LANG_zh_Hans 是 LuCI 语言选择项。
-#    两项汉化包缺一即英文界面，这里必须拦住，不能只靠 WARN。
-for s in 'CONFIG_PACKAGE_luci=y' \
-         'CONFIG_LUCI_LANG_zh_Hans=y' \
+# ④ 基本中文环境（硬校验：LuCI 简体中文 + 基础汉化 + 无线配置汉化）
+for s in 'CONFIG_LUCI_LANG_zh_Hans=y' \
          'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' \
          'CONFIG_PACKAGE_luci-i18n-mtwifi-cfg-zh-cn=y'; do
   if ! grep -q "^${s}$" .config; then
@@ -91,8 +58,18 @@ for s in 'CONFIG_PACKAGE_luci=y' \
 done
 ok "中文环境：LuCI 简体中文 + 基础汉化 + 无线配置汉化"
 
-echo "===== 包集合门禁通过 ====="
-# ===== 包集合门禁段 END =====
+# ⑤ 软提示（不阻断）：保留项与系统工具缺了只提醒，不 fail
+for p in luci-app-turboacc-mtk luci-i18n-turboacc-mtk-zh-cn \
+         htop tcpdump ipset iptables-mod-tproxy ethtool swconfig \
+         wireless-tools openssh-sftp-server luci-theme-bootstrap-mod \
+         kmod-tun kmod-tcp-bbr ca-certificates; do
+  if ! grep -q "^CONFIG_PACKAGE_${p}=y" .config; then
+    echo "[WARN] 可选包 $p 未启用（如需请检查 config/*.config）"
+  fi
+done
+
+echo "===== 必要包校验通过（config 可自由增包）====="
+# ===== 必要包正向校验段 END =====
 
 # ===== 统一 LAN 管理地址段 BEGIN（三份 scripts/*.sh 逐字相同）=====
 # 三机型固件 LAN 统一 192.168.31.1、DHCP 池 2~55。
