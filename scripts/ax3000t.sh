@@ -77,6 +77,19 @@ for p in htop tcpdump ipset iptables-mod-tproxy ethtool swconfig \
   fi
 done
 
+# ⑦ 基本中文环境（硬校验：LuCI 简体中文 + 基础汉化 + 闭源无线配置汉化）
+#    中文界面实际由 luci-i18n-* 提供；CONFIG_LUCI_LANG_zh_Hans 是 LuCI 语言选择项。
+#    两项汉化包缺一即英文界面，这里必须拦住，不能只靠 WARN。
+for s in 'CONFIG_PACKAGE_luci=y' \
+         'CONFIG_LUCI_LANG_zh_Hans=y' \
+         'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' \
+         'CONFIG_PACKAGE_luci-i18n-mtwifi-cfg-zh-cn=y'; do
+  if ! grep -q "^${s}$" .config; then
+    fail "缺少基本中文环境：$s（刷完会是英文 LuCI）"
+  fi
+done
+ok "中文环境：LuCI 简体中文 + 基础汉化 + 无线配置汉化"
+
 echo "===== 包集合门禁通过 ====="
 # ===== 包集合门禁段 END =====
 
