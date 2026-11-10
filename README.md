@@ -29,7 +29,7 @@ GitHub Actions 云编译 ImmortalWrt 21.02 / Linux 5.4 固件。
 
 - **闭源无线驱动**全套（这份源码没有开源 mt76，缺一即无 WiFi）
 - **系统完整功能**：系统库、内核模块、netfilter/iptables 扩展、系统工具、默认主题
-- 第三方插件**只有 `zram-swap`**（含内核绑定的 `kmod-zram` / `kmod-lib-lzo`，事后装不上，必须编进固件）
+- 第三方插件**只有 `zram-swap`**（含内核绑定的 `kmod-zram` / `kmod-lib-lzo`）；默认 **64M / lzo**，编译期固化，刷完无需设置
 - **中文环境**：LuCI 中文 + 基础/无线汉化包
 - 依赖由 `make defconfig` 自动展开；编译前门禁校验以上四项，并拦截任何其它插件
 
@@ -48,9 +48,10 @@ WF3000A 需要 fork 里已覆盖 4 个板级文件（DTS、`mt7981.mk`、`02_net
 1. **布局对应**：112m / expand(114m) / 110m，刷错布局起不来
 2. **地址跳转**：固件 LAN 是 `192.168.31.1`
 3. **先验再刷**：WF3000A 先 initramfs 内存启动，确认 `NMBM has been successfully attached` 且无 mismatch，重点验有线网口与 MAC
-4. **zram**（可选 64M）：
+4. **zram**：默认 `64M / lzo` 已固化，`sysupgrade -n` 或重刷后仍自动生效
    ```sh
-   uci set system.@system[0].zram_size_mb='64' && uci commit system
+   cat /sys/block/zram0/disksize        # 67108864
+   cat /sys/block/zram0/comp_algorithm  # [lzo]
    ```
 
 > 未实际执行 `make` / 编译 DTS / 实机验证，最终以在线编译与实机为准。
