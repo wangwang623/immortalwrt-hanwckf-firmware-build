@@ -3,7 +3,7 @@
 # 由 .github/workflows/build-ax3000t.yml 的 SELF_SCRIPT 调用。
 # 在 openwrt 源码根目录执行；配套 config/ax3000t.config。
 #
-# 本脚本 = 共用包集合门禁（头部，三份逐字一致）+ 本机型的自检/后置处理。
+# 本脚本 = 共用包集合门禁 + 统一 LAN 地址段（两者三份逐字一致）+ 机型专属自检。
 # 目录约定：config/ 放 .config，scripts/ 放 .sh，workflows/ 放 .yml，
 #           三个目录都按 ax3000t / wf3000a / ax6000 一一对应。
 
@@ -93,14 +93,29 @@ ok "中文环境：LuCI 简体中文 + 基础汉化 + 无线配置汉化"
 echo "===== 包集合门禁通过 ====="
 # ===== 包集合门禁段 END =====
 
+# ===== 统一 LAN 管理地址段 BEGIN（三份 scripts/*.sh 逐字相同）=====
+# 三机型固件 LAN 统一 192.168.31.1、DHCP 池 2~55。
+# U-Boot Web failsafe 地址烧在 FIP 里（AX3000T / WF3000A = 192.168.1.1，
+# AX6000 = 192.168.31.1），本段只改固件生成的 network / dhcp 配置，不影响 U-Boot。
+# 目标文件来自源码树；缺失即 fail，避免 bash -e 下 sed 静默失败或源码路径漂移。
+CG=package/base-files/files/bin/config_generate
+DHCP=package/network/services/dnsmasq/files/dhcp.conf
+[ -f "$CG" ]   || fail "缺少 $CG（源码树路径变了，请核对）"
+[ -f "$DHCP" ] || fail "缺少 $DHCP（源码树路径变了，请核对）"
+
+sed -i 's/192\.168\.1\.1/192.168.31.1/g' "$CG"
+sed -i "s/option start.*/option start '2'/g" "$DHCP"
+sed -i "s/option limit.*/option limit '55'/g" "$DHCP"
+
+grep -q '192\.168\.31\.1' "$CG" || fail "config_generate 改写未生效（源码里可能已不是字面 192.168.1.1）"
+ok "LAN 192.168.31.1 / DHCP 2~55（三机型统一）"
+# ===== 统一 LAN 管理地址段 END =====
+
 # ===== 机型专属段 =====
-# 项目 1 / 3 —— AX3000T：保持原工程设定（管理地址 192.168.31.1、DHCP 2~55）。
+# 项目 1 / 3 —— AX3000T：5.4 源码原生支持，无需板级移植。
 # 与 config/ax3000t.config 配套；本文件由 build-ax3000t.yml 的 SELF_SCRIPT 调用。
-# Description: (After Update feeds)
+# 管理地址 / DHCP 已由上方「统一 LAN 管理地址段」处理（三机型逐字一致），
+# 这里不再重复 sed —— 原工程 after-update-custom.sh 的 3 行已并入共用段。
 
-# Modify default IP
-sed -i 's/192.168.1.1/192.168.31.1/g' package/base-files/files/bin/config_generate
-
-# Set DHCP IP Address start and end
-sed -i "s/option start.*/option start \'2\'/g" package/network/services/dnsmasq/files/dhcp.conf
-sed -i "s/option limit.*/option limit \'55\'/g" package/network/services/dnsmasq/files/dhcp.conf
+echo "===== AX3000T：源码原生机型，无板级自检项 ====="
+ok "AX3000T 配置就绪"

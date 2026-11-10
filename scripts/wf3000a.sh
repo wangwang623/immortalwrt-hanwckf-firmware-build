@@ -3,7 +3,7 @@
 # 由 .github/workflows/build-wf3000a.yml 的 SELF_SCRIPT 调用。
 # 在 openwrt 源码根目录执行；配套 config/wf3000a.config。
 #
-# 本脚本 = 共用包集合门禁（头部，三份逐字一致）+ 本机型的自检/后置处理。
+# 本脚本 = 共用包集合门禁 + 统一 LAN 地址段（两者三份逐字一致）+ 机型专属自检。
 # 目录约定：config/ 放 .config，scripts/ 放 .sh，workflows/ 放 .yml，
 #           三个目录都按 ax3000t / wf3000a / ax6000 一一对应。
 
@@ -93,16 +93,33 @@ ok "中文环境：LuCI 简体中文 + 基础汉化 + 无线配置汉化"
 echo "===== 包集合门禁通过 ====="
 # ===== 包集合门禁段 END =====
 
+# ===== 统一 LAN 管理地址段 BEGIN（三份 scripts/*.sh 逐字相同）=====
+# 三机型固件 LAN 统一 192.168.31.1、DHCP 池 2~55。
+# U-Boot Web failsafe 地址烧在 FIP 里（AX3000T / WF3000A = 192.168.1.1，
+# AX6000 = 192.168.31.1），本段只改固件生成的 network / dhcp 配置，不影响 U-Boot。
+# 目标文件来自源码树；缺失即 fail，避免 bash -e 下 sed 静默失败或源码路径漂移。
+CG=package/base-files/files/bin/config_generate
+DHCP=package/network/services/dnsmasq/files/dhcp.conf
+[ -f "$CG" ]   || fail "缺少 $CG（源码树路径变了，请核对）"
+[ -f "$DHCP" ] || fail "缺少 $DHCP（源码树路径变了，请核对）"
+
+sed -i 's/192\.168\.1\.1/192.168.31.1/g' "$CG"
+sed -i "s/option start.*/option start '2'/g" "$DHCP"
+sed -i "s/option limit.*/option limit '55'/g" "$DHCP"
+
+grep -q '192\.168\.31\.1' "$CG" || fail "config_generate 改写未生效（源码里可能已不是字面 192.168.1.1）"
+ok "LAN 192.168.31.1 / DHCP 2~55（三机型统一）"
+# ===== 统一 LAN 管理地址段 END =====
+
 # ===== 机型专属段 =====
 # 项目 2 / 3 —— KST WF3000A：5.4 板级移植 4 文件静态自检。
 # 与 config/wf3000a.config 配套；本文件由 build-wf3000a.yml 的 SELF_SCRIPT 调用。
 # 在 openwrt 源码根目录执行（CI 的 "Load custom config" 阶段）。
 # 配套：.github/workflows/build-wf3000a.yml → CONFIG_FILE=config/wf3000a.config（本文件在 scripts/）
 #
-# 不做任何 sed 改写：AX3000T 参考工程把管理地址改成 192.168.31.1，
-# WF3000A 保持 ImmortalWrt 默认 192.168.1.1。
-# 只做「失败要趁早」的静态自检：4 个板级文件是否真的覆盖进来了，
-# 以及是否误把 6.6 / 8103 的错误写法带进来。
+# 管理地址 / DHCP 已由上方「统一 LAN 管理地址段」改为 192.168.31.1（三机型一致），
+# 这里不再重复 sed。以下只做「失败要趁早」的静态自检：4 个板级文件是否真的
+# 覆盖进来了，以及是否误把 6.6 / 8103 的错误写法带进来。
 
 
 DTS=target/linux/mediatek/files-5.4/arch/arm64/boot/dts/mediatek/mt7981-kst-wf3000a.dts
