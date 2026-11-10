@@ -49,12 +49,16 @@ env:
 三份 config 是同一套要求的三个实例：
 
 - **保留原工程的系统本身完整功能**：全部系统库、`kmod-*` 内核模块、netfilter / iptables / ip6tables / ebtables 扩展、
-  `ethtool` / `swconfig` / `wireless-tools` / `htop` / `tcpdump` / `nano` / `ipset` /
+  `ethtool` / `swconfig` / `wireless-tools` / `htop` / `tcpdump` / `ipset` /
   openssh / 系统默认主题 `luci-theme-bootstrap-mod` 等，逐项从原工程 617 行 `.config` 恢复。
+  例外：`nano` 在原工程即为 `=n`，按「保持原设定」不动，编辑器由 busybox `vi` 提供。
 - **闭源无线驱动齐全**：`kmod-mt_wifi` / `kmod-warp` / `kmod-conninfra` / `wifi-dats` / `mtwifi-cfg` /
   `luci-app-mtwifi-cfg` / `kmod-mediatek_hnat`。这份源码没有开源 mt76，缺一即无 WiFi。
 - **第三方插件只有 `zram-swap`**（含必须同编的 `kmod-zram` / `kmod-lib-lzo`）。
   `kmod-zram` 与内核 vermagic 强绑定，事后 `opkg install` 装不上，所以必须编进固件。
+- **基本中文环境**：`CONFIG_LUCI_LANG_zh_Hans=y` + `luci-i18n-base-zh-cn` +
+  `luci-i18n-mtwifi-cfg-zh-cn`。这四项已列为**编译前硬校验**，任一缺失直接 fail，
+  不会产出英文界面的固件。
 - **已删除的插件**：PassWall、SSR-Plus、vssr、rclone、TurboACC、UPnP（含 miniupnpd）、
   eqos（含 mtkhqos_util）、Argon 主题，以及它们的汉化包与全部 `INCLUDE_*` 子选项。
 - 依赖不手写，`make defconfig` 会沿依赖树自动展开；门禁在编译前拦截白名单外的插件。
@@ -88,7 +92,8 @@ README.md
 ```
 
 > 根目录**不再有** `.config`、旧 `scripts/` 的散落副本、`config/*.sh` 或 `check-packages.sh`；
-> 旧的 `build-immortalwrt.yml` 应删除。仓库里不应再有 `_unchanged/` 之类存放旧文件的目录。
+> 旧的 `build-immortalwrt.yml` 应删除。仓库里不应再有 `_unchanged/` 之类存放旧文件的目录，
+> 也不应上传本地交付用的 `操作说明.md` / `验证报告.md`（不属于编译工程）。
 
 ---
 
@@ -109,7 +114,9 @@ README.md
 三条流各设三道编译期门禁（配置存在性与包集合 → `make defconfig` 后机型符号 → 产物文件名），
 配置错误会在几分钟内 fail，不会等两小时编译完才发现。
 
-本地目录与内容校验、模拟运行（含 7 个负例）的结果见本仓库 `验证报告.md`。
+三条流的编译前门禁（`scripts/*.sh` 头部，三份逐字一致）在 `make defconfig` 之前
+校验：闭源驱动、zram 三件套、中文环境、无白名单外插件；随后 `scripts/<机型>.sh`
+的专属段校验板级文件 / 平台符号 / 大分区。`make defconfig` 后与产物阶段另有两道门禁。
 
 ---
 
