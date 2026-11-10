@@ -164,7 +164,7 @@ if grep -q 'gmac1: mac@1' "$CODE"; then fail "DTS 里还有 gmac1（应只用单
 if grep -q 'phy-handle' "$CODE"; then fail "DTS 里还有外置 PHY（8103 的写法），WF3000A 没有这颗 PHY"; fi
 if grep -q 'ethernet-phy@0' "$CODE"; then fail "DTS 里还有 phy0 节点"; fi
 if grep -q 'mediatek,mt7531' "$CODE"; then fail "5.4 用 gsw(mediatek,mt753x)，不是 6.6 的 DSA switch"; fi
-if grep -q 'mediatek,portmap' "$CODE"; then fail "不要写 mediatek,portmap（默认映射把 port0 当 WAN，与本机 port3=WAN 冲突）"; fi
+if grep -q 'mediatek,portmap' "$CODE"; then fail "不要写 mediatek,portmap（驱动 4 种内建映射均不对应 port3=WAN，VLAN 由 02_network/swconfig 配置）"; fi
 if grep -q 'mediatek,bmt-mtd-overridden-oobsize' "$CODE"; then fail "5.4 OOB 天然 64B，不要加 6.6 的 override"; fi
 if grep -q '&wifi' "$CODE"; then fail "5.4 的 mt7981.dtsi 没有 wifi 节点"; fi
 if grep -q 'nvmem-layout' "$CODE"; then fail "5.4 不读 nvmem-layout"; fi
