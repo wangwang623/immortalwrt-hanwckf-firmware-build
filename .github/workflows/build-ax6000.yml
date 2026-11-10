@@ -2,7 +2,7 @@ name: Build Redmi AX6000 Firmware
 
 # 项目 3 / 3 —— Redmi AX6000（110m 大分区）
 # 配置集中：config/ax6000.config + scripts/ax6000.sh（110m / MT7986 符号自检）。
-# 共用门禁：内联在 scripts/ax6000.sh 头部（三份逐字一致）。
+# 共用校验：内联在 scripts/ax6000.sh 头部（三份逐字一致）。
 # 源码统一：wangwang623/immortalwrt-mt798x（5.4 原生支持 AX6000，无需板级移植）。
 
 # 源码：wangwang623/immortalwrt-mt798x（与 AX3000T / WF3000A 共用同一份 fork）
@@ -112,6 +112,31 @@ jobs:
       run: |
         cd openwrt
         make defconfig
+        echo "===== defconfig 后必要包正向校验（不限制新增包）====="
+        for s in \
+          'CONFIG_PACKAGE_kmod-mt_wifi=y' \
+          'CONFIG_PACKAGE_kmod-warp=y' \
+          'CONFIG_PACKAGE_kmod-conninfra=y' \
+          'CONFIG_PACKAGE_wifi-dats=y' \
+          'CONFIG_PACKAGE_mtwifi-cfg=y' \
+          'CONFIG_PACKAGE_luci-app-mtwifi-cfg=y' \
+          'CONFIG_PACKAGE_kmod-mediatek_hnat=y' \
+          'CONFIG_PACKAGE_kmod-zram=y' \
+          'CONFIG_PACKAGE_kmod-lib-lzo=y' \
+          'CONFIG_PACKAGE_zram-swap=y' \
+          'CONFIG_PACKAGE_luci=y' \
+          'CONFIG_PACKAGE_opkg=y' \
+          'CONFIG_PACKAGE_ppp=y' \
+          'CONFIG_PACKAGE_ca-bundle=y' \
+          'CONFIG_LUCI_LANG_zh_Hans=y' \
+          'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' \
+          'CONFIG_PACKAGE_luci-i18n-mtwifi-cfg-zh-cn=y' ; do
+          grep -qx "$s" .config || { echo "[FAIL] defconfig 丢弃了必要包：$s"; exit 1; }
+        done
+        for p in luci-app-turboacc-mtk luci-i18n-turboacc-mtk-zh-cn; do
+          grep -qx "CONFIG_PACKAGE_${p}=y" .config || echo "[WARN] 可选包 $p 未启用（不阻断）"
+        done
+        echo "[OK] 闭源驱动 / zram / 中文 / 基础系统包齐全；不校验新增插件"
         echo "===== defconfig 后机型符号校验（110m 大分区）====="
         grep -q '^CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_xiaomi_redmi-router-ax6000=y' .config || {
           echo "[FAIL] AX6000 110m 机型符号被 defconfig 丢弃"
@@ -156,7 +181,7 @@ jobs:
 
     - name: Organize files
       id: organize
-      if: (!cancelled())
+      if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
