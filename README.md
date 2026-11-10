@@ -28,11 +28,16 @@ env:
 
 `Load custom config` 步骤用 `cp "$CONFIG_FILE" openwrt/.config`（**不是 `mv`**，配置不会被消耗），然后执行 `"$GITHUB_WORKSPACE/$SELF_SCRIPT"`。
 
-| 项目 | 分区布局 | U-Boot Web 选 | 管理地址 |
-|---|---|---|---|
-| Xiaomi AX3000T（MT7981） | **112m** | 112m | 192.168.31.1（原设定） |
-| KST WF3000A（MT7981） | **expand(114m)** | 114m | 192.168.1.1 |
-| Redmi AX6000（MT7986） | **110m** | 110m | 192.168.1.1 |
+| 项目 | 分区布局 | U-Boot Web 选 | U-Boot Web 地址 | 固件 LAN（本工程统一） |
+|---|---|---|---|---|
+| Xiaomi AX3000T（MT7981） | **112m** | 112m | 192.168.1.1 | **192.168.31.1** |
+| KST WF3000A（MT7981） | **expand(114m)** | 114m | 192.168.1.1 | **192.168.31.1** |
+| Redmi AX6000（MT7986） | **110m** | 110m | 192.168.31.1 | **192.168.31.1** |
+
+**固件 LAN 三机型统一 `192.168.31.1`、DHCP 池 `2~55`**，由三份 `scripts/*.sh` 里逐字一致的
+「统一 LAN 管理地址段」改写 `config_generate` 与 `dhcp.conf` 实现。
+U-Boot Web 地址烧在 FIP 里，**不受本工程影响**；AX3000T / WF3000A 刷完会从 1.1 跳到 31.1，
+AX6000 两段都是 31.1。浏览器停在旧地址转圈不是变砖，见文末「编译成功 ≠ 能正常用」。
 
 三机型都只用大分区，**不编小米原厂 stock 布局**。三条流各有独立的 Release tag（`AX3000T_` / `WF3000A_` / `AX6000_110m_`）、cache key 与 artifact 前缀，不会互相覆盖。
 
@@ -71,7 +76,10 @@ env:
 > 不能从 AX3000T 派生 —— 混进 `WARP_CHIPSET="mt7981"` 等符号会把驱动指向错误固件，
 > `scripts/ax6000.sh` 会直接拦下。
 
-`scripts/ax3000t.sh` 内含原工程 `after-update-custom.sh` 的 3 行 sed：管理地址 **192.168.31.1**、DHCP `2~55` 保持不变。
+**统一 LAN 管理地址段**：三份 `scripts/*.sh` 在包集合门禁之后各含一段逐字相同的 sed，
+把管理地址改为 **192.168.31.1**、DHCP `2~55`。原工程 `after-update-custom.sh` 的 3 行 sed 已并入该段，
+根目录那份文件不再被引用，可删除。段内先校验目标文件存在、再校验改写结果，
+源码路径漂移会在编译前 fail，而不是产出地址不对的固件。
 
 ---
 
@@ -115,8 +123,9 @@ README.md
 配置错误会在几分钟内 fail，不会等两小时编译完才发现。
 
 三条流的编译前门禁（`scripts/*.sh` 头部，三份逐字一致）在 `make defconfig` 之前
-校验：闭源驱动、zram 三件套、中文环境、无白名单外插件；随后 `scripts/<机型>.sh`
-的专属段校验板级文件 / 平台符号 / 大分区。`make defconfig` 后与产物阶段另有两道门禁。
+校验：闭源驱动、zram 三件套、中文环境、无白名单外插件；紧接着的统一地址段写入 31.1；
+随后 `scripts/<机型>.sh` 的专属段校验板级文件 / 平台符号 / 大分区。
+`make defconfig` 后与产物阶段另有两道门禁。
 
 ---
 
@@ -139,17 +148,20 @@ README.md
 1. **先 initramfs 内存启动**（WF3000A 有该产物，不写 flash、零风险）：
    确认能进系统、`dmesg | grep -i nmbm` 出现 `NMBM has been successfully attached` 且无 `mismatch`。
 2. **确认布局对应**：U-Boot Web 里 112m / expand(114m) / 110m 必须与所刷固件一致，刷错布局起不来。
-3. **确认有线与无线**：WF3000A 的 5.4 DTS 是按 6.6 已验证硬件定义重写的，
+3. **确认管理地址跳转**：固件 LAN 统一 `192.168.31.1`。AX3000T / WF3000A 的 U-Boot Web 是 `192.168.1.1`，
+   传完固件重启后要把浏览器改到 `http://192.168.31.1`（电脑网卡保持自动获取）；
+   AX6000 两段都是 31.1，不用改。停在旧地址转圈不是变砖。
+4. **确认有线与无线**：WF3000A 的 5.4 DTS 是按 6.6 已验证硬件定义重写的，
    静态自检通过但**尚未实机验证有线/无线**；重点看 `ip link`、各 LAN/WAN 口能否拿到 IP、
    `iwpriv ra0` 与校准数据。刷 8103 固件有线不通就是拓扑不同，这一版已改为 3LAN+1WAN。
-4. **确认 MAC**：WF3000A 从 `Factory 0x4` 推导 LAN−1 / WAN−2，应与机身标签一致，不要出现随机 MAC。
-5. **zram**：5.4 没有 `CONFIG_ZRAM_DEF_COMP_LZ4`，容量/算法由 UCI 决定。
+5. **确认 MAC**：WF3000A 从 `Factory 0x4` 推导 LAN−1 / WAN−2，应与机身标签一致，不要出现随机 MAC。
+6. **zram**：5.4 没有 `CONFIG_ZRAM_DEF_COMP_LZ4`，容量/算法由 UCI 决定。
    如需 64M，刷完后设：
    ```sh
    uci set system.@system[0].zram_size_mb='64'
    uci commit system
    ```
-6. 有条件接 TTL（115200 8N1），开机日志里 `ubi0 error` / `VFS: Unable to mount root fs` 能一句确诊。
+7. 有条件接 TTL（115200 8N1），开机日志里 `ubi0 error` / `VFS: Unable to mount root fs` 能一句确诊。
 
 > 边界：沙盒没有交叉工具链与 `dtc`，未实际执行 `make defconfig` / `make` / 编译 DTS，
 > 最终以在线编译与实机验证为准。
