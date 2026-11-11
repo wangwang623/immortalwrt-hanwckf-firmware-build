@@ -1,4 +1,4 @@
-name: Build AX3000T Firmware
+name: Build AX3000T Firmware On Ubuntu24
 
 # 项目 1 / 3 —— Xiaomi AX3000T（112m 大分区）
 # 配置集中：config/ax3000t.config + scripts/ax3000t.sh（原工程 after-update-custom.sh
