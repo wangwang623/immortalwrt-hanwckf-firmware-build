@@ -25,10 +25,10 @@ scripts/   ax3000t.sh       wf3000a.sh       ax6000.sh
 | 闭源驱动 | `kmod-mt_wifi` / `kmod-warp` / `kmod-conninfra` / `wifi-dats` / `mtwifi-cfg` / `kmod-mediatek_hnat`，缺一即无 WiFi |
 | 系统工具 / 库 / kmod | hkint 原版 `.config` 全量保留，补齐 `luci / opkg / ppp / ca-bundle` |
 | 中文环境 | `CONFIG_LUCI_LANG_zh_Hans` + `luci-i18n-base-zh-cn` + `luci-i18n-mtwifi-cfg-zh-cn` |
-| zram-swap | 内核绑定、事后装不上；编译期固化默认 **64M / lzo**，防内存突发占用 |
+| zram-swap | 内核绑定、事后装不上；编译期固化默认 **64M / lzo**，防内存突发占用；同时编入 `kmod-lib-lz4`，LuCI 里改选 lz4 也能生效 |
 | Argon 主题 | `luci-theme-argon` + 依赖 `wget` / `jsonfilter`，首次启动自动设为默认界面 |
 
-另保留 hkint 基线的「网络 → 网络加速」页（turboacc-mtk），不属最小集合、不参与校验。不编：网速控制 / UPnP / 文件传输 / 代理类。三机型固件 LAN 统一 `192.168.31.1`、DHCP `2~55`。
+另保留 hkint 基线的「网络 → 网络加速」页（turboacc-mtk），不属最小集合、不参与校验。不编：网速控制 / UPnP / 文件传输 / 代理类。三机型固件 LAN 统一 `192.168.31.1`、DHCP `100~250`（`start 100` / `limit 151`，`limit` 为地址个数）。
 
 ## 校验规则
 
@@ -44,6 +44,6 @@ scripts/   ax3000t.sh       wf3000a.sh       ax6000.sh
 
 ```sh
 cat /sys/block/zram0/disksize        # 67108864（64M）
-cat /sys/block/zram0/comp_algorithm  # [lzo]
+cat /sys/block/zram0/comp_algorithm  # 列表含 lzo / lz4，[] 为当前算法；默认 [lzo]
 swconfig dev switch0 show            # WF3000A：VLAN1=0/1/2+6t，VLAN2=3+6t
 ```
