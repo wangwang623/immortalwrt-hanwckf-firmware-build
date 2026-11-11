@@ -11,7 +11,7 @@
 # ===== 最小系统必要包正向校验段 BEGIN（三份 scripts/*.sh 逐字相同，改一处需同步三处）=====
 # 执行位置：openwrt 源码根目录、make defconfig【之前】。
 # 校验范围只限「当前最小完整功能系统」必须的包：
-#   闭源驱动 / HNAT · 基础系统 · 中文环境 · zram-swap · Argon 主题
+#   闭源驱动 / HNAT · 基础系统 · 中文环境 · zram-swap（含 lzo/lz4）· Argon 主题
 # 不校验「哪些包不该在」；以后在 config/*.config 增删扩展插件，本段都不拦，
 # 那时只需另验「新包版本是否兼容、依赖是否完整」。
 # config 末尾的 is not set 行是当前的不编声明，不是门禁；加包改成 =y 即可。
@@ -32,13 +32,13 @@ for p in kmod-mt_wifi kmod-warp kmod-conninfra wifi-dats mtwifi-cfg \
 done
 ok "闭源无线驱动 + HNAT 齐全"
 
-# ② zram-swap 三件套（与内核绑定，事后 opkg install 装不上）
-for p in kmod-zram kmod-lib-lzo zram-swap; do
+# ② zram-swap 及算法模块（与内核绑定，事后 opkg install 装不上）
+for p in kmod-zram kmod-lib-lzo kmod-lib-lz4 zram-swap; do
   if ! grep -q "^CONFIG_PACKAGE_${p}=y" .config; then
-    fail "缺少 $p（zram-swap 三件套必须编进固件）"
+    fail "缺少 $p（zram-swap 与算法模块必须编进固件）"
   fi
 done
-ok "zram-swap + kmod-zram + kmod-lib-lzo 已内置"
+ok "zram-swap + kmod-zram + lzo/lz4 算法模块已内置"
 
 # ③ 基础系统包
 for p in luci opkg ppp ca-bundle; do
@@ -70,7 +70,7 @@ echo "===== 最小系统齐全（config 可自由增包）====="
 # ===== 最小系统必要包正向校验段 END =====
 
 # ===== 统一 LAN 管理地址段 BEGIN（三份 scripts/*.sh 逐字相同）=====
-# 三机型固件 LAN 统一 192.168.31.1、DHCP 池 2~55。
+# 三机型固件 LAN 统一 192.168.31.1、DHCP 池 100~250（start=100 / limit=151；limit 是地址个数，不是结束地址）。
 # U-Boot Web failsafe 地址烧在 FIP 里（AX3000T / WF3000A = 192.168.1.1，
 # AX6000 = 192.168.31.1），本段只改固件生成的 network / dhcp 配置，不影响 U-Boot。
 # 目标文件来自源码树；缺失即 fail，避免 bash -e 下 sed 静默失败或源码路径漂移。
@@ -80,18 +80,20 @@ DHCP=package/network/services/dnsmasq/files/dhcp.conf
 [ -f "$DHCP" ] || fail "缺少 $DHCP（源码树路径变了，请核对）"
 
 sed -i 's/192\.168\.1\.1/192.168.31.1/g' "$CG"
-sed -i "s/option start.*/option start '2'/g" "$DHCP"
-sed -i "s/option limit.*/option limit '55'/g" "$DHCP"
+sed -i "s/option start.*/option start '100'/g" "$DHCP"
+sed -i "s/option limit.*/option limit '151'/g" "$DHCP"
 
 grep -q '192\.168\.31\.1' "$CG" || fail "config_generate 改写未生效（源码里可能已不是字面 192.168.1.1）"
-ok "LAN 192.168.31.1 / DHCP 2~55（三机型统一）"
+grep -q "option start '100'" "$DHCP" || fail "DHCP start 改写未生效"
+grep -q "option limit '151'" "$DHCP" || fail "DHCP limit 改写未生效"
+ok "LAN 192.168.31.1 / DHCP 100~250（start 100 / limit 151，三机型统一）"
 # ===== 统一 LAN 管理地址段 END =====
 
 # ===== zram 默认参数段 BEGIN（三份 scripts/*.sh 逐字相同）=====
 # 把 64M / lzo 固化进固件：通过 OpenWrt 标准 rootfs 叠加目录 openwrt/files/
 # 注入 uci-defaults，首次启动即写入 /etc/config/system，无需刷完在 LuCI 手动设。
 # sysupgrade -n / U-Boot Web 重刷后，脚本随新固件 squashfs 再次出现并重新执行。
-# 只编了 kmod-lib-lzo，算法固定 lzo（LuCI 下拉里其它算法是静态枚举，选了不生效）。
+# lzo / lz4 模块都已编入，LuCI 里改选任一个都生效；默认仍是 64M / lzo。
 # workflow 的 "Load custom config" 可能已把 CI 根目录 files/ mv 进来，
 # 这里用 mkdir -p 兼容两种情形，不覆盖其它 uci-defaults。
 UCI_D=files/etc/uci-defaults
