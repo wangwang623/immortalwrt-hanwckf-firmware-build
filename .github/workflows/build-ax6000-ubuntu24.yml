@@ -33,7 +33,7 @@ env:
   FEEDS_CONF: feeds.conf.default
 jobs:
   build:
-    name: build-redmi-ax6000-firmware-base-on-ubuntu24
+    name: build-redmi-ax6000-firmware-on-ubuntu24
     runs-on: ubuntu-24.04
 
     permissions:
