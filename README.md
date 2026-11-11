@@ -16,24 +16,32 @@ scripts/   ax3000t.sh       wf3000a.sh       ax6000.sh
 .github/workflows/  build-ax3000t.yml  build-wf3000a.yml  build-ax6000.yml
 ```
 
-三个并行项目：workflow 只按机型选 `config/` 与 `scripts/` 里对应的一对文件，共用逻辑三份逐字一致。
+三个并行项目：workflow 按机型选 `config/` 与 `scripts/` 里对应的一对文件，共用逻辑三份逐字一致。
 
-## 当前系统 = 最小完整功能
+## 最小完整功能系统
 
-| 组成 | 内容 |
-|---|---|
-| 闭源驱动 | `kmod-mt_wifi` / `kmod-warp` / `kmod-conninfra` / `wifi-dats` / `mtwifi-cfg` / `kmod-mediatek_hnat`，缺一即无 WiFi |
-| 系统工具 / 库 / kmod | hkint 原版 `.config` 全量保留，补齐 `luci / opkg / ppp / ca-bundle` |
-| 中文环境 | `CONFIG_LUCI_LANG_zh_Hans` + `luci-i18n-base-zh-cn` + `luci-i18n-mtwifi-cfg-zh-cn` |
-| zram-swap | 内核绑定、事后装不上；编译期固化默认 **64M / lzo**，防内存突发占用；同时编入 `kmod-lib-lz4`，LuCI 里改选 lz4 也能生效 |
-| Argon 主题 | `luci-theme-argon` + 依赖 `wget` / `jsonfilter`，首次启动自动设为默认界面 |
+闭源驱动（MTK 闭源 WiFi + HNAT 硬件加速）、基础系统工具 / 库 / kmod、中文环境、
+zram-swap（编译期固化 **64M / lzo**，防内存突增）、Argon 主题。
+不编：网速控制 / UPnP / 文件传输 / 代理类；保留 hkint 基线的「网络加速」页。
 
-另保留 hkint 基线的「网络 → 网络加速」页（turboacc-mtk），不属最小集合、不参与校验。不编：网速控制 / UPnP / 文件传输 / 代理类。三机型固件 LAN 统一 `192.168.31.1`、DHCP `100~249`（`start 100` / `limit 150`，`limit` 为地址个数）。
+## 校验规则（固定源码 5.4 / luci 21.02 基线）
 
-## 校验规则
+| 层级 | 内容 | 处理 |
+|---|---|---|
+| 硬 | 6 个主包 + 18 个直接依赖包（按源码 Makefile 的 DEPENDS / LUCI_DEPENDS 核对，均已显式 `=y`） | 编译前 + defconfig 后各查一次，缺任一 `[FAIL]` 中止编译 |
+| 软 | 只查 3 个主包：`luci-i18n-base-zh-cn` `luci-theme-argon` `kmod-lib-lz4` | 缺项 `[WARN]`，继续编译（可后装） |
+| 不校验 | 软项依赖（已在 config 显式 `=y`）、条件依赖 `+IPV6:luci-proto-ipv6`、非包符号 `@BUSYBOX_*`、二层传递依赖、DHCP 值、新增扩展插件 | 不拦 |
 
-- **现在**：编译前 + `make defconfig` 后，只校验上表必要包是否齐全，缺任一即 fail；不检查「不该有哪些包」。
-- **以后加扩展插件**（如 ssr-plus）：在 `config/*.config` 把对应行改成 `=y` 即可，门禁不拦。只验三件事——包版本与 5.4 内核 / 闭源驱动兼容、`make defconfig` 后该包及依赖仍为 `=y`、产物无缺失依赖。
+- 硬依赖：`kmod-mt_wifi→wifi-dats/kmod-conninfra/kmod-warp`；`kmod-mediatek_hnat→kmod-nf-conntrack`；
+  `luci→uhttpd 等 9 项`；`opkg→uclient-fetch/libpthread/libubox`；`zram-swap→kmod-zram`；
+  `kmod-lib-lzo→kmod-crypto-acompress`。二层依赖由 `make defconfig` 自动展开。
+- 软项依赖 `luci-base / wget / jsonfilter / kmod-crypto-acompress` 显式 `=y`，但校验时不查；
+  `kmod-crypto-acompress` 同时是 lzo 的硬依赖，按硬身份校验。
+- `kmod-lib-lz4` 编了 LuCI 可选 lz4，没编则回退 lzo；`lz4` 只作软检查。
+- 以后加 ssr-plus 等：`config/*.config` 对应行改 `=y`，另验版本兼容与依赖完整；换源码版本须重新核对依赖名。
+
+LAN 统一 `192.168.31.1`；DHCP 池由 `scripts/*.sh` 顶部 `DHCP_START` / `DHCP_LIMIT`
+设定（`limit` 是地址个数），属个人习惯、不校验，fork 后随意改不会被拦。
 
 ## 编译与刷机
 
@@ -44,6 +52,6 @@ scripts/   ax3000t.sh       wf3000a.sh       ax6000.sh
 
 ```sh
 cat /sys/block/zram0/disksize        # 67108864（64M）
-cat /sys/block/zram0/comp_algorithm  # 列表含 lzo / lz4，[] 为当前算法；默认 [lzo]
+cat /sys/block/zram0/comp_algorithm  # 默认 [lzo]；编了 lz4 则列表里也会出现 lz4
 swconfig dev switch0 show            # WF3000A：VLAN1=0/1/2+6t，VLAN2=3+6t
 ```
