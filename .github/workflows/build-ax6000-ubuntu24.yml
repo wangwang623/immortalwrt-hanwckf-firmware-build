@@ -1,4 +1,4 @@
-name: Build Redmi AX6000 Firmware
+name: Build Redmi AX6000 Firmware On Ubuntu24
 
 # 项目 3 / 3 —— Redmi AX6000（110m 大分区）
 # 配置集中：config/ax6000.config + scripts/ax6000.sh（110m / MT7986 符号自检）。
