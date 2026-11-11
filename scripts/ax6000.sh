@@ -4,26 +4,26 @@
 # 在 openwrt 源码根目录执行；配套 config/ax6000.config。
 #
 # 本脚本 = 三段共用逻辑（三份逐字一致）+ 机型专属自检：
-#           · 必要包正向校验  · 统一 LAN 地址  · zram 默认 64M/lzo
+#           · 最小系统必要包校验  · 统一 LAN 地址  · zram 默认 64M/lzo
 # 目录约定：config/ 放 .config，scripts/ 放 .sh，workflows/ 放 .yml，
 #           三个目录都按 ax3000t / wf3000a / ax6000 一一对应。
 
-# ===== 必要包正向校验段 BEGIN（三份 scripts/*.sh 逐字相同，改一处需同步三处）=====
+# ===== 最小系统必要包正向校验段 BEGIN（三份 scripts/*.sh 逐字相同，改一处需同步三处）=====
 # 执行位置：openwrt 源码根目录、make defconfig【之前】。
-# 只校验「必要包在不在」，不校验「哪些包不该在」：
-#   · 以后改 config/*.config 增删任何非必要包，本段都不会拦
-#   · 只有缺了闭源驱动 / zram / 中文环境 / 基础系统包才 fail
-# config 末尾的 is not set 行是当前的「不编声明」，不是门禁；
-#   想加某个包，把对应行改成 =y 即可，无需改脚本。
+# 校验范围只限「当前最小完整功能系统」必须的包：
+#   闭源驱动 / HNAT · 基础系统 · 中文环境 · zram-swap · Argon 主题
+# 不校验「哪些包不该在」；以后在 config/*.config 增删扩展插件，本段都不拦，
+# 那时只需另验「新包版本是否兼容、依赖是否完整」。
+# config 末尾的 is not set 行是当前的不编声明，不是门禁；加包改成 =y 即可。
 # 所有 grep 都用 if 包裹，避免 bash -e 下「没匹配到」误退。
 
 fail() { echo "[FAIL] $*"; exit 1; }
 ok()   { echo "[OK]   $*"; }
 
 [ -f .config ] || fail "openwrt/.config 不存在（workflow 没有把 config/*.config 拷进来）"
-echo "===== 必要包正向校验（不限制新增包）====="
+echo "===== 最小系统必要包校验（不限制新增包）====="
 
-# ① 闭源无线驱动与 HNAT（硬依赖，缺一即无 WiFi / 无硬件加速）
+# ① 闭源无线驱动与 HNAT（缺一即无 WiFi / 无硬件加速）
 for p in kmod-mt_wifi kmod-warp kmod-conninfra wifi-dats mtwifi-cfg \
          luci-app-mtwifi-cfg kmod-mediatek_hnat; do
   if ! grep -q "^CONFIG_PACKAGE_${p}=y" .config; then
@@ -48,28 +48,26 @@ for p in luci opkg ppp ca-bundle; do
 done
 ok "luci / opkg / ppp / ca-bundle 齐全"
 
-# ④ 基本中文环境（硬校验：LuCI 简体中文 + 基础汉化 + 无线配置汉化）
+# ④ 基本中文环境（缺了刷完是英文 LuCI）
 for s in 'CONFIG_LUCI_LANG_zh_Hans=y' \
          'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' \
          'CONFIG_PACKAGE_luci-i18n-mtwifi-cfg-zh-cn=y'; do
   if ! grep -q "^${s}$" .config; then
-    fail "缺少基本中文环境：$s（刷完会是英文 LuCI）"
+    fail "缺少基本中文环境：$s"
   fi
 done
 ok "中文环境：LuCI 简体中文 + 基础汉化 + 无线配置汉化"
 
-# ⑤ 软提示（不阻断）：保留项与系统工具缺了只提醒，不 fail
-for p in luci-app-turboacc-mtk luci-i18n-turboacc-mtk-zh-cn \
-         htop tcpdump ipset iptables-mod-tproxy ethtool swconfig \
-         wireless-tools openssh-sftp-server luci-theme-bootstrap-mod \
-         kmod-tun kmod-tcp-bbr ca-certificates; do
+# ⑤ Argon 主题及依赖（最小系统的界面组成，漏了退回默认主题、体验欠佳）
+for p in luci-theme-argon wget jsonfilter; do
   if ! grep -q "^CONFIG_PACKAGE_${p}=y" .config; then
-    echo "[WARN] 可选包 $p 未启用（如需请检查 config/*.config）"
+    fail "缺少 Argon 主题或其依赖：$p"
   fi
 done
+ok "Argon 主题 + wget / jsonfilter 已内置"
 
-echo "===== 必要包校验通过（config 可自由增包）====="
-# ===== 必要包正向校验段 END =====
+echo "===== 最小系统齐全（config 可自由增包）====="
+# ===== 最小系统必要包正向校验段 END =====
 
 # ===== 统一 LAN 管理地址段 BEGIN（三份 scripts/*.sh 逐字相同）=====
 # 三机型固件 LAN 统一 192.168.31.1、DHCP 池 2~55。
