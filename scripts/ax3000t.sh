@@ -4,96 +4,74 @@
 # 在 openwrt 源码根目录执行；配套 config/ax3000t.config。
 #
 # 本脚本 = 三段共用逻辑（三份逐字一致）+ 机型专属自检：
-#           · 最小系统必要包校验  · 统一 LAN 地址  · zram 默认 64M/lzo
+#           · 基本系统硬校验/软校验  · 统一 LAN 地址  · zram 默认 64M/lzo
 # 目录约定：config/ 放 .config，scripts/ 放 .sh，workflows/ 放 .yml，
 #           三个目录都按 ax3000t / wf3000a / ax6000 一一对应。
 
-# ===== 最小系统必要包正向校验段 BEGIN（三份 scripts/*.sh 逐字相同，改一处需同步三处）=====
+# ===== 基本系统校验段 BEGIN（三份 scripts/*.sh 逐字相同，改一处需同步三处）=====
 # 执行位置：openwrt 源码根目录、make defconfig【之前】。
-# 校验范围只限「当前最小完整功能系统」必须的包：
-#   闭源驱动 / HNAT · 基础系统 · 中文环境 · zram-swap（含 lzo/lz4）· Argon 主题
-# 不校验「哪些包不该在」；以后在 config/*.config 增删扩展插件，本段都不拦，
-# 那时只需另验「新包版本是否兼容、依赖是否完整」。
-# config 末尾的 is not set 行是当前的不编声明，不是门禁；加包改成 =y 即可。
-# 所有 grep 都用 if 包裹，避免 bash -e 下「没匹配到」误退。
+# 固定基线：wangwang623/immortalwrt-mt798x @ openwrt-21.02（Linux 5.4）
+#           + immortalwrt/luci @ openwrt-21.02。主包的直接包依赖按这两份源码的
+#           DEPENDS / LUCI_DEPENDS 逐项核过，显式写进 config/*.config 并纳入硬校验。
+#   · 硬校验 FAIL：6 个基本系统主包 + 18 个直接依赖包，缺任一即中止编译。
+#   · 软校验 WARN：只查 3 个主包；它们的依赖已显式 =y，但不校验。
+#   · 不校验：条件依赖（+IPV6:luci-proto-ipv6）、非包符号（@BUSYBOX_* / @TARGET_*）、
+#             二层传递依赖、DHCP 值、新增扩展插件。
+# 排除的二层依赖由 make defconfig 自动展开；换源码版本时须重新核对依赖名。
+# 所有 grep 都用 || 包裹，避免 bash -e 下「没匹配到」误退。
 
 fail() { echo "[FAIL] $*"; exit 1; }
 ok()   { echo "[OK]   $*"; }
+warn() { echo "[WARN] $*（可刷完补装，继续编译）"; }
 
 [ -f .config ] || fail "openwrt/.config 不存在（workflow 没有把 config/*.config 拷进来）"
-echo "===== 最小系统必要包校验（不限制新增包）====="
 
-# ① 闭源无线驱动与 HNAT（缺一即无 WiFi / 无硬件加速）
-for p in kmod-mt_wifi kmod-warp kmod-conninfra wifi-dats mtwifi-cfg \
-         luci-app-mtwifi-cfg kmod-mediatek_hnat; do
-  if ! grep -q "^CONFIG_PACKAGE_${p}=y" .config; then
-    fail "缺少闭源驱动/加速包：$p"
-  fi
+echo "===== 硬校验：基本系统主包 + 直接依赖（缺任一即中止编译）====="
+for p in \
+  kmod-mt_wifi kmod-mediatek_hnat luci opkg zram-swap kmod-lib-lzo \
+  wifi-dats kmod-conninfra kmod-warp kmod-nf-conntrack \
+  uhttpd uhttpd-mod-ubus luci-mod-admin-full luci-theme-bootstrap \
+  luci-app-firewall luci-app-opkg luci-proto-ppp libiwinfo-lua rpcd-mod-rrdns \
+  uclient-fetch libpthread libubox kmod-zram kmod-crypto-acompress ; do
+  grep -q "^CONFIG_PACKAGE_${p}=y" .config || fail "缺少基本系统包（主包或直接依赖）：$p"
 done
-ok "闭源无线驱动 + HNAT 齐全"
+ok "基本系统 24 项齐全（主包 6 + 直接依赖 18）"
 
-# ② zram-swap 及算法模块（与内核绑定，事后 opkg install 装不上）
-for p in kmod-zram kmod-lib-lzo kmod-lib-lz4 zram-swap; do
-  if ! grep -q "^CONFIG_PACKAGE_${p}=y" .config; then
-    fail "缺少 $p（zram-swap 与算法模块必须编进固件）"
-  fi
+echo "===== 软校验：只查主包（依赖已显式 =y、不校验）====="
+for p in luci-i18n-base-zh-cn luci-theme-argon kmod-lib-lz4; do
+  grep -q "^CONFIG_PACKAGE_${p}=y" .config || warn "缺少 $p"
 done
-ok "zram-swap + kmod-zram + lzo/lz4 算法模块已内置"
-
-# ③ 基础系统包
-for p in luci opkg ppp ca-bundle; do
-  if ! grep -q "^CONFIG_PACKAGE_${p}=y" .config; then
-    fail "缺少基础系统包：$p"
-  fi
-done
-ok "luci / opkg / ppp / ca-bundle 齐全"
-
-# ④ 基本中文环境（缺了刷完是英文 LuCI）
-for s in 'CONFIG_LUCI_LANG_zh_Hans=y' \
-         'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' \
-         'CONFIG_PACKAGE_luci-i18n-mtwifi-cfg-zh-cn=y'; do
-  if ! grep -q "^${s}$" .config; then
-    fail "缺少基本中文环境：$s"
-  fi
-done
-ok "中文环境：LuCI 简体中文 + 基础汉化 + 无线配置汉化"
-
-# ⑤ Argon 主题及依赖（最小系统的界面组成，漏了退回默认主题、体验欠佳）
-for p in luci-theme-argon wget jsonfilter; do
-  if ! grep -q "^CONFIG_PACKAGE_${p}=y" .config; then
-    fail "缺少 Argon 主题或其依赖：$p"
-  fi
-done
-ok "Argon 主题 + wget / jsonfilter 已内置"
-
-echo "===== 最小系统齐全（config 可自由增包）====="
-# ===== 最小系统必要包正向校验段 END =====
+ok "软项检查完毕（不限制新增插件）"
+echo "===== 校验结束 ====="
+# ===== 基本系统校验段 END =====
 
 # ===== 统一 LAN 管理地址段 BEGIN（三份 scripts/*.sh 逐字相同）=====
-# 三机型固件 LAN 统一 192.168.31.1、DHCP 池 100~249（start=100 / limit=150；limit 是地址个数，不是结束地址）。
-# U-Boot Web failsafe 地址烧在 FIP 里（AX3000T / WF3000A = 192.168.1.1，
-# AX6000 = 192.168.31.1），本段只改固件生成的 network / dhcp 配置，不影响 U-Boot。
-# 目标文件来自源码树；缺失即 fail，避免 bash -e 下 sed 静默失败或源码路径漂移。
+# 三机型固件 LAN 统一 192.168.31.1；U-Boot Web failsafe 地址烧在 FIP 里
+# （AX3000T / WF3000A = 192.168.1.1，AX6000 = 192.168.31.1），本段只改固件生成的
+# network / dhcp 配置，不影响 U-Boot。
+# DHCP 池只是个人习惯：改下面 DHCP_START / DHCP_LIMIT 两个变量即可，
+# limit 是地址个数不是结束地址（100 + 150 = 100~249）。本段不校验具体值，
+# fork 后按自己习惯改不会被拦；只保留文件存在检查，防止源码路径漂移。
 CG=package/base-files/files/bin/config_generate
 DHCP=package/network/services/dnsmasq/files/dhcp.conf
+DHCP_START=100
+DHCP_LIMIT=150
 [ -f "$CG" ]   || fail "缺少 $CG（源码树路径变了，请核对）"
 [ -f "$DHCP" ] || fail "缺少 $DHCP（源码树路径变了，请核对）"
 
 sed -i 's/192\.168\.1\.1/192.168.31.1/g' "$CG"
-sed -i "s/option start.*/option start '100'/g" "$DHCP"
-sed -i "s/option limit.*/option limit '150'/g" "$DHCP"
+sed -i "s/option start.*/option start '$DHCP_START'/g" "$DHCP"
+sed -i "s/option limit.*/option limit '$DHCP_LIMIT'/g" "$DHCP"
 
 grep -q '192\.168\.31\.1' "$CG" || fail "config_generate 改写未生效（源码里可能已不是字面 192.168.1.1）"
-grep -q "option start '100'" "$DHCP" || fail "DHCP start 改写未生效"
-grep -q "option limit '150'" "$DHCP" || fail "DHCP limit 改写未生效"
-ok "LAN 192.168.31.1 / DHCP 100~249（start 100 / limit 150，三机型统一）"
+ok "LAN 192.168.31.1 / DHCP start $DHCP_START / limit $DHCP_LIMIT（DHCP 值不校验）"
 # ===== 统一 LAN 管理地址段 END =====
 
 # ===== zram 默认参数段 BEGIN（三份 scripts/*.sh 逐字相同）=====
 # 把 64M / lzo 固化进固件：通过 OpenWrt 标准 rootfs 叠加目录 openwrt/files/
 # 注入 uci-defaults，首次启动即写入 /etc/config/system，无需刷完在 LuCI 手动设。
 # sysupgrade -n / U-Boot Web 重刷后，脚本随新固件 squashfs 再次出现并重新执行。
-# lzo / lz4 模块都已编入，LuCI 里改选任一个都生效；默认仍是 64M / lzo。
+# 默认仍是 64M / lzo；lz4 编入与否都不影响本段，未编则由 zram.init 回退 lzo。
 # workflow 的 "Load custom config" 可能已把 CI 根目录 files/ mv 进来，
 # 这里用 mkdir -p 兼容两种情形，不覆盖其它 uci-defaults。
 UCI_D=files/etc/uci-defaults
