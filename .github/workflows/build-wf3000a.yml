@@ -109,7 +109,7 @@ jobs:
       run: |
         cd openwrt
         make defconfig
-        echo "===== defconfig 后必要包正向校验（不限制新增包）====="
+        echo "===== defconfig 后最小系统必要包校验（不限制新增包）====="
         for s in \
           'CONFIG_PACKAGE_kmod-mt_wifi=y' \
           'CONFIG_PACKAGE_kmod-warp=y' \
@@ -127,13 +127,13 @@ jobs:
           'CONFIG_PACKAGE_ca-bundle=y' \
           'CONFIG_LUCI_LANG_zh_Hans=y' \
           'CONFIG_PACKAGE_luci-i18n-base-zh-cn=y' \
-          'CONFIG_PACKAGE_luci-i18n-mtwifi-cfg-zh-cn=y' ; do
+          'CONFIG_PACKAGE_luci-i18n-mtwifi-cfg-zh-cn=y' \
+          'CONFIG_PACKAGE_luci-theme-argon=y' \
+          'CONFIG_PACKAGE_wget=y' \
+          'CONFIG_PACKAGE_jsonfilter=y' ; do
           grep -qx "$s" .config || { echo "[FAIL] defconfig 丢弃了必要包：$s"; exit 1; }
         done
-        for p in luci-app-turboacc-mtk luci-i18n-turboacc-mtk-zh-cn; do
-          grep -qx "CONFIG_PACKAGE_${p}=y" .config || echo "[WARN] 可选包 $p 未启用（不阻断）"
-        done
-        echo "[OK] 闭源驱动 / zram / 中文 / 基础系统包齐全；不校验新增插件"
+        echo "[OK] 最小系统齐全（闭源驱动 / 中文 / zram / Argon / 基础系统）；不校验新增插件"
         echo "===== defconfig 后机型符号校验 ====="
         grep -q '^CONFIG_TARGET_DEVICE_mediatek_mt7981_DEVICE_kst_wf3000a=y' .config || {
           echo "[FAIL] 机型符号被 defconfig 丢弃，检查源码 fork 的 mt7981.mk 是否覆盖成功"
