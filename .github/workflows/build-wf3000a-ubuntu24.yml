@@ -30,7 +30,7 @@ env:
   FEEDS_CONF: feeds.conf.default
 jobs:
   build:
-    name: build-kst-wf3000a-firmware-base-on-ubuntu24
+    name: build-kst-wf3000a-firmware-on-ubuntu24
     runs-on: ubuntu-24.04
 
     permissions:
