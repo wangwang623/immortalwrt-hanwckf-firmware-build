@@ -1,4 +1,4 @@
-name: Build KST WF3000A Firmware
+name: Build KST WF3000A Firmware On Ubuntu24
 
 # 项目 2 / 3 —— KST WF3000A（expand 114m 大分区）
 # 配置集中：config/wf3000a.config + scripts/wf3000a.sh（板级移植 4 文件自检）。
