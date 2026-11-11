@@ -19,21 +19,10 @@ on:
   # schedule:
   #   - cron: "0 0 20 * *"
   workflow_dispatch:
-    inputs:
-      source_branch:
-        description: "源码 fork 的分支名（默认 openwrt-21.02）"
-        required: false
-        default: "openwrt-21.02"
-      publish_release:
-        description: "是否发布 GitHub Release（false 只留 Artifacts）"
-        required: false
-        type: choice
-        options: ["true", "false"]
-        default: "true"
 
 env:
   REPO_URL: https://github.com/wangwang623/immortalwrt-mt798x.git
-  REPO_BRANCH: ${{ github.event.inputs.source_branch || 'openwrt-21.02' }}
+  REPO_BRANCH: openwrt-21.02
   CONFIG_FILE: config/wf3000a.config
   SELF_BEFORE_SH: before-update-custom.sh
   SELF_SCRIPT: scripts/wf3000a.sh
@@ -206,7 +195,7 @@ jobs:
 
     - name: Generate release tag
       id: tag
-      if: steps.compile.outputs.status == 'success' && !cancelled() && github.event.inputs.publish_release != 'false'
+      if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
         echo "release_tag=WF3000A_$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         touch release.txt
