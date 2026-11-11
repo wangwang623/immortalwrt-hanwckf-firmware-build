@@ -123,6 +123,7 @@ jobs:
           'CONFIG_PACKAGE_kmod-mediatek_hnat=y' \
           'CONFIG_PACKAGE_kmod-zram=y' \
           'CONFIG_PACKAGE_kmod-lib-lzo=y' \
+          'CONFIG_PACKAGE_kmod-lib-lz4=y' \
           'CONFIG_PACKAGE_zram-swap=y' \
           'CONFIG_PACKAGE_luci=y' \
           'CONFIG_PACKAGE_opkg=y' \
@@ -136,7 +137,7 @@ jobs:
           'CONFIG_PACKAGE_jsonfilter=y' ; do
           grep -qx "$s" .config || { echo "[FAIL] defconfig 丢弃了必要包：$s"; exit 1; }
         done
-        echo "[OK] 最小系统齐全（闭源驱动 / 中文 / zram / Argon / 基础系统）；不校验新增插件"
+        echo "[OK] 最小系统齐全（闭源驱动 / 中文 / zram lzo+lz4 / Argon / 基础系统）；不校验新增插件"
         echo "===== defconfig 后机型符号校验（110m 大分区）====="
         grep -q '^CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_xiaomi_redmi-router-ax6000=y' .config || {
           echo "[FAIL] AX6000 110m 机型符号被 defconfig 丢弃"
