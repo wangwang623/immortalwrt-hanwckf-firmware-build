@@ -70,7 +70,7 @@ echo "===== 最小系统齐全（config 可自由增包）====="
 # ===== 最小系统必要包正向校验段 END =====
 
 # ===== 统一 LAN 管理地址段 BEGIN（三份 scripts/*.sh 逐字相同）=====
-# 三机型固件 LAN 统一 192.168.31.1、DHCP 池 100~250（start=100 / limit=151；limit 是地址个数，不是结束地址）。
+# 三机型固件 LAN 统一 192.168.31.1、DHCP 池 100~249（start=100 / limit=150；limit 是地址个数，不是结束地址）。
 # U-Boot Web failsafe 地址烧在 FIP 里（AX3000T / WF3000A = 192.168.1.1，
 # AX6000 = 192.168.31.1），本段只改固件生成的 network / dhcp 配置，不影响 U-Boot。
 # 目标文件来自源码树；缺失即 fail，避免 bash -e 下 sed 静默失败或源码路径漂移。
@@ -81,12 +81,12 @@ DHCP=package/network/services/dnsmasq/files/dhcp.conf
 
 sed -i 's/192\.168\.1\.1/192.168.31.1/g' "$CG"
 sed -i "s/option start.*/option start '100'/g" "$DHCP"
-sed -i "s/option limit.*/option limit '151'/g" "$DHCP"
+sed -i "s/option limit.*/option limit '150'/g" "$DHCP"
 
 grep -q '192\.168\.31\.1' "$CG" || fail "config_generate 改写未生效（源码里可能已不是字面 192.168.1.1）"
 grep -q "option start '100'" "$DHCP" || fail "DHCP start 改写未生效"
-grep -q "option limit '151'" "$DHCP" || fail "DHCP limit 改写未生效"
-ok "LAN 192.168.31.1 / DHCP 100~250（start 100 / limit 151，三机型统一）"
+grep -q "option limit '150'" "$DHCP" || fail "DHCP limit 改写未生效"
+ok "LAN 192.168.31.1 / DHCP 100~249（start 100 / limit 150，三机型统一）"
 # ===== 统一 LAN 管理地址段 END =====
 
 # ===== zram 默认参数段 BEGIN（三份 scripts/*.sh 逐字相同）=====
