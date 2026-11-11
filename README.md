@@ -28,7 +28,7 @@ scripts/   ax3000t.sh       wf3000a.sh       ax6000.sh
 | zram-swap | 内核绑定、事后装不上；编译期固化默认 **64M / lzo**，防内存突发占用；同时编入 `kmod-lib-lz4`，LuCI 里改选 lz4 也能生效 |
 | Argon 主题 | `luci-theme-argon` + 依赖 `wget` / `jsonfilter`，首次启动自动设为默认界面 |
 
-另保留 hkint 基线的「网络 → 网络加速」页（turboacc-mtk），不属最小集合、不参与校验。不编：网速控制 / UPnP / 文件传输 / 代理类。三机型固件 LAN 统一 `192.168.31.1`、DHCP `100~250`（`start 100` / `limit 151`，`limit` 为地址个数）。
+另保留 hkint 基线的「网络 → 网络加速」页（turboacc-mtk），不属最小集合、不参与校验。不编：网速控制 / UPnP / 文件传输 / 代理类。三机型固件 LAN 统一 `192.168.31.1`、DHCP `100~249`（`start 100` / `limit 150`，`limit` 为地址个数）。
 
 ## 校验规则
 
