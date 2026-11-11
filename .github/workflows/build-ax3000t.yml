@@ -2,7 +2,7 @@ name: Build AX3000T Firmware
 
 # 项目 1 / 3 —— Xiaomi AX3000T（112m 大分区）
 # 配置集中：config/ax3000t.config + scripts/ax3000t.sh（原工程 after-update-custom.sh
-#           的 3 行 sed 已并入共用段；现统一为 192.168.31.1 / DHCP 100~250）。
+#           的 3 行 sed 已并入共用段；现统一为 192.168.31.1 / DHCP 100~249）。
 # 共用校验：内联在 scripts/ax3000t.sh 头部（三份逐字一致）。
 # 源码统一：wangwang623/immortalwrt-mt798x（与另两条流同一份 fork）。
 
